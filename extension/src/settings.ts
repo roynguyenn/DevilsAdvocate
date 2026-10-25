@@ -29,9 +29,6 @@ export const DEFAULT_SETTINGS: Settings = {
   active: false,
 }
 
-// Harsh mode: discretionary purchases above this share of the budget get a forced cooling-off timer.
-export const HARSH_COOLDOWN = { minutes: 5, budgetPercent: 10 }
-
 const STORAGE_KEY = 'settings'
 
 export async function loadSettings(): Promise<Settings> {

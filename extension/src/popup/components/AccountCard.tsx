@@ -1,4 +1,4 @@
-import { ArrowDownLeft, CheckCircle2, Landmark, Lock, Receipt, ShoppingBag, type LucideIcon } from 'lucide-react'
+import { ArrowDownLeft, CheckCircle2, Landmark, Lock, ShoppingBag, type LucideIcon } from 'lucide-react'
 import { usePopupStore } from '../store'
 
 interface Props {
@@ -8,7 +8,6 @@ interface Props {
 const READS: { Icon: LucideIcon; label: string; detail: string }[] = [
   { Icon: ShoppingBag, label: 'Purchases', detail: 'to see where your discretionary money goes' },
   { Icon: ArrowDownLeft, label: 'Deposits', detail: 'to know when payday is coming' },
-  { Icon: Receipt, label: 'Bills', detail: 'to keep fixed costs off the table' },
 ]
 
 export default function AccountCard({ onConnect }: Props) {
@@ -19,7 +18,7 @@ export default function AccountCard({ onConnect }: Props) {
     <section className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-panel p-4" aria-labelledby="account-title">
       <div>
         <h2 id="account-title" className="text-sm font-semibold text-zinc-100">Account Connection</h2>
-        <p className="text-xs text-zinc-400">The agent reads your real spending through Capital One.</p>
+        <p className="text-xs text-zinc-400">The agent reads your real bank account spending.</p>
       </div>
 
       {account ? (

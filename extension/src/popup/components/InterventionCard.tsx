@@ -1,5 +1,5 @@
-import { Flame, Scale, TriangleAlert, type LucideIcon } from 'lucide-react'
-import { HARSH_COOLDOWN, type Intensity } from '../../settings'
+import { Check, Flame, Scale, TriangleAlert, type LucideIcon } from 'lucide-react'
+import { type Intensity } from '../../settings'
 import { usePopupStore } from '../store'
 
 interface Level {
@@ -21,7 +21,7 @@ const LEVELS: Level[] = [
     iconClass: 'text-yellow-400',
     selectedClass: 'border-yellow-400/70 bg-yellow-400/10',
     description:
-      'A quick budget reminder and a simple "Are you sure?" before the purchase goes through. Low friction.',
+      'Intervenes only when necessary. Provides a quick budget reminder and a simple "Are you sure?" before the purchase goes through. Low friction.',
   },
   {
     id: 'medium',
@@ -41,9 +41,7 @@ const LEVELS: Level[] = [
     iconClass: 'text-red-400',
     selectedClass: 'border-red-500/70 bg-red-500/10',
     description:
-      `Maximum friction. Aggressively challenges impulse buys, calls out missed savings goals, and demands a robust defense. ` +
-      `Discretionary purchases over ${HARSH_COOLDOWN.budgetPercent}% of your budget trigger a mandatory ` +
-      `${HARSH_COOLDOWN.minutes}-minute cooling-off timer.`,
+      'Maximum friction. Aggressively challenges impulse buys, calls out missed savings goals, and demands a robust defense.',
   },
 ]
 
@@ -73,9 +71,14 @@ export default function InterventionCard() {
                 isSelected ? selectedClass : 'border-zinc-700 hover:border-zinc-600 hover:bg-zinc-800/50'
               }`}
             >
-              {id === 'medium' && (
-                <span className="absolute -top-2 rounded-full border border-zinc-700 bg-panel px-1.5 text-[10px] text-zinc-400">
-                  Default
+              {/* Follows the choice. aria-hidden: the radio's aria-checked already announces it. */}
+              {isSelected && (
+                <span
+                  aria-hidden
+                  className="absolute -top-2 flex items-center gap-0.5 rounded-full border border-zinc-700 bg-panel py-px pl-1 pr-1.5 text-[10px] font-medium text-zinc-200"
+                >
+                  <Check className={`h-2.5 w-2.5 ${iconClass}`} strokeWidth={3} />
+                  Selected
                 </span>
               )}
               <Icon className={`h-5 w-5 ${iconClass}`} aria-hidden />

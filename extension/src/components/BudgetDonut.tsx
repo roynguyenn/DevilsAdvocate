@@ -126,24 +126,25 @@ export default function BudgetDonut() {
                 key={d.key}
                 onMouseEnter={() => index >= 0 && setActiveIndex(index)}
                 onMouseLeave={() => setActiveIndex(null)}
-                className={`flex items-center justify-between gap-2 rounded-md px-2 py-1 transition-opacity ${
+                className={`flex flex-col gap-0.5 rounded-md px-2 py-1 transition-opacity ${
                   isDimmed ? 'opacity-40' : ''
                 } ${activeIndex === index ? 'bg-zinc-800' : ''}`}
               >
-                <span className="flex min-w-0 items-center gap-2 text-zinc-400">
+                {/* Label on its own line so it's never truncated; the amount sits under it, aligned with the text. */}
+                <span className="flex items-center gap-2 text-xs text-zinc-400">
                   <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: d.color }} />
-                  <span className="truncate">{d.label}</span>
+                  {d.label}
                 </span>
-                <span className="shrink-0 font-medium tabular-nums text-zinc-100">
+                <span className="pl-[1.125rem] font-medium tabular-nums text-zinc-100">
                   {formatUsd(d.value)}
                   <span className="ml-1.5 text-xs font-normal text-zinc-400">{formatPercent(d.value, totalBudget)}</span>
                 </span>
               </li>
             )
           })}
-          <li className="mt-1 flex items-center justify-between gap-2 border-t border-zinc-800 px-2 pt-2">
-            <span className="truncate text-zinc-400">Discretionary budget</span>
-            <span className="font-medium tabular-nums text-zinc-100">{formatUsd(totalBudget)}</span>
+          <li className="mt-1 flex flex-col gap-0.5 border-t border-zinc-800 px-2 pt-2">
+            <span className="pl-[1.125rem] text-xs text-zinc-400">Discretionary budget</span>
+            <span className="pl-[1.125rem] font-medium tabular-nums text-zinc-100">{formatUsd(totalBudget)}</span>
           </li>
         </ul>
       </div>
