@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Injected into the shadow root via ?inline — :host is the overlay's document root. */
+:host {
+  color-scheme: light;
+  font-size: 16px;
+}

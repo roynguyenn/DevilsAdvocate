@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Devil's Advocate — Amazon Purchase Interceptor",
+  "description": "Intercepts Amazon checkout and makes you defend the purchase against your budget.",
+  "version": "0.1.0",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://www.amazon.com/checkout/*",
+    "https://www.amazon.com/gp/buy/spc/handlers/display.html*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.amazon.com/checkout/*",
+        "https://www.amazon.com/gp/buy/spc/handlers/display.html*"
+      ],
+      "js": [
+        "src/content.tsx"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
