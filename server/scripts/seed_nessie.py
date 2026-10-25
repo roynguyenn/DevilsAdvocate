@@ -62,11 +62,16 @@ call("POST", f"/accounts/{account_id}/bills", {
     "payment_date": "2026-11-01", "recurring_date": 1, "payment_amount": 700,
 })
 
+# Simulated "Buy anyway" purchases are recorded against this merchant. Nessie wants category as a string.
+merchant_id = created_id(call("POST", "/merchants", {
+    "name": "Amazon (demo)", "category": "shopping",
+    "address": {"street_number": "1", "street_name": "Demo St", "city": "Seattle", "state": "WA", "zip": "98109"},
+    "geocode": {"lat": 47.6, "lng": -122.3},
+}))
+
 print("\nAccount now:", json.dumps(call("GET", f"/accounts/{account_id}"), indent=2))
 print("Bills:", json.dumps(call("GET", f"/accounts/{account_id}/bills"), indent=2))
-purchases = call("GET", f"/accounts/{account_id}/purchases")
-print("Purchases endpoint:", "works" if purchases is not None else "not available -> keep spending in seed JSON")
 
-ids = {"customer_id": customer_id, "account_id": account_id, "last_name": last_name}
+ids = {"customer_id": customer_id, "account_id": account_id, "merchant_id": merchant_id, "last_name": last_name}
 (ROOT / "data" / "nessie_ids.json").write_text(json.dumps(ids, indent=2))
 print("\nSaved", ids)

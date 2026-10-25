@@ -29,7 +29,7 @@
 *   **Service Worker (`src/background.ts`):** Proxies every backend call (content scripts on https pages can't reliably fetch `http://localhost`). Callers use `callServer()` from `src/api.ts`, which sends a typed `ServerRequest` message (`evaluate` or `chat`) and resolves with the server's JSON. No auth session yet.
 
 ### 3.2 Frontend (React UI)
-*   **State:** Use a single `Zustand` store for charts, chat history, and verdict state. It holds a mock snapshot (`monthlyIncome`, `fixedBills`, `totalBudget` = discretionary budget, `spent`, `daysUntilPayday`, `ledger`); savings is derived (`selectSavings` = income − fixed bills − discretionary). The server's result lives in `evaluation` (set by `applyEvaluation`). **Known gap:** the charts and ledger still read the mock snapshot ($800 budget / $540 spent), while the score uses the server's data ($400 / $150), so they disagree until `/evaluate` returns the snapshot and the store uses it.
+*   **State:** Use a single `Zustand` store for charts, chat history, and verdict state. It holds a mock snapshot (`monthlyIncome`, `fixedBills`, `totalBudget` = discretionary budget, `spent`, `daysUntilPayday`, `ledger`); savings is derived (`selectSavings` = income − fixed bills − discretionary). The server's result lives in `evaluation` (set by `applyEvaluation`), which also replaces `totalBudget`, `spent` and `ledger` with the server's snapshot so the donut and Recent Ledger match the score. The mock values only show until the server answers. **Known gap:** `monthlyIncome` and `fixedBills` (Income & Allocation card) are still mock.
 *   **Theme:** Dark overlay (see 7. Code Style → Styling for the exact palette).
 *   **Animations:** Use `Framer Motion` for a smooth slide-in/fade-in of the overlay.
 *   **Layout:** Two-panel split view sliding in from the right (stacks vertically below the `md` breakpoint).
@@ -42,18 +42,25 @@
         *   Pinned verdict badge at the top: `[ Negotiating ]`, `[ Blocked ]`, or `[ Approved ]`. `Blocked` is set only when `/evaluate` returns `action: "block"`.
         *   Chat window. The first agent message is `Score <before> → <after>.` plus Claude's explanation. Replies arrive whole (not streamed). Agent bubbles are amber-tinted; user bubbles are zinc.
         *   User input: enabled once `evaluation` is set, disabled while the agent is replying, and capped at `MAX_USER_TURNS` = 3 replies (mirrors the server, which enforces it). Enter sends, Shift+Enter adds a newline. Sending goes through the store action `sendChat`.
-        *   *Not yet built:* "Sleep on it 24h", "Make a commitment" and "Buy anyway" buttons; cooldown.
+        *   **"Buy anyway (simulated)"** (`SimulatedBuyButton`, store action `simulatePurchase`): logs the item as a fake purchase via `POST /purchase`, then updates the ledger and spent from the returned snapshot. The checkout click stays blocked, so no Amazon order is placed. One click per intercept.
+        *   *Not yet built:* "Sleep on it 24h" and "Make a commitment" buttons; cooldown.
 
 ### 3.3 Backend (`server/`, FastAPI)
 *   **Layout:** routes in `app.py` stay thin (load state → call pure functions → save state).
     *   `score.py`: pure functions only (no I/O, LLM or randomness). `compute_components`, `decide`, `evaluate` (returns the "facts" dict).
-    *   `snapshot.py`: `get_financial_snapshot()` is the only way anything reads finances. Returns `{ balance, bills_14d, spent_this_month }`. `DATA_SOURCE=seed` (default) reads `data/seed_snapshot.json`; `DATA_SOURCE=nessie` reads the account in `data/nessie_ids.json` (balance from the account, bills = pending/recurring bills due in the next 14 days) while `spent_this_month` stays seeded.
+    *   `snapshot.py`: `get_financial_snapshot()` is the only way anything reads finances. Returns `{ balance, bills_14d, spent_this_month, transactions }`.
+        *   `transactions` = seeded rows from `data/seed_snapshot.json` (they sum to $150, the worked example) + simulated purchases, newest first, latest 10. Each is `{ id, merchant, category, amount, timestamp (ms), simulated }`.
+        *   `spent_this_month` = seeded rows + simulated purchases dated this month. `balance` = source balance − simulated purchases (neither source deducts them).
+        *   `DATA_SOURCE=seed` (default): balance/bills from the seed file; simulated purchases in `data/purchases.json` (git-ignored).
+        *   `DATA_SOURCE=nessie`: balance from the account in `data/nessie_ids.json`, bills = pending/recurring bills due in the next 14 days, simulated purchases = the account's Nessie purchases minus `ignored_nessie_purchases` in `state.json`.
+        *   `record_simulated_purchase(title, price)` writes to whichever source is active.
     *   `nessie.py`: thin httpx client. Errors are re-raised as `NessieError` without the URL, because the URL carries the API key.
     *   `llm.py`: `explain(facts)` and `chat(facts, title, history)`, both through `_grounded_or`, which falls back to `template_message` when there's no key, the API errors, Claude refuses, or `numbers_are_grounded` fails.
     *   `store.py`: reads/writes `data/state.json` (settings, `regret_penalty`, `blocks_this_week`) and `data/commitments.json`, via temp file + rename. Both files are git-ignored and recreated from defaults.
 *   **Endpoints:**
     *   `GET /health` → `{ ok: true }`.
-    *   `POST /evaluate` `{ title, price, quantity?, category? }` → facts (`score_before`, `score_after`, `components_after`, `bills_14d`, `budget_left_after`, `mode`, `action`, `floor` in strict mode) + `message`.
+    *   `POST /evaluate` `{ title, price, quantity?, category? }` → facts (`score_before`, `score_after`, `components_after`, `bills_14d`, `budget_left_after`, `mode`, `action`, `floor` in strict mode) + `message` + `snapshot` `{ budget, spent_this_month, balance, transactions }` for the UI. The snapshot is never sent to the LLM.
+    *   `POST /purchase` `{ title, price }` → `{ snapshot }`. **SIMULATED** "Buy anyway": records a fake purchase so the ledger and the next score reflect it. Nothing is ordered anywhere.
     *   `POST /chat` `{ purchase, history: [{ role: user|assistant, content }] }` → `{ reply, done }`. History must end with a user turn; more than 3 user turns returns `done: true` without calling Claude. Facts are recomputed server-side, never taken from the client.
     *   `GET|PUT /settings` `{ budget, buffer_target, mode: aware|strict, floor }`.
     *   Stubs (TODO): `POST /commit`, `GET /followups`, `POST /outcome`, `POST /demo/skip-week`.
@@ -61,8 +68,13 @@
 
 ### 3.4 Capital One Nessie Integration
 *   **Base URL:** `https://prod-api.nessieisreal.com` (set by `NESSIE_BASE`). Auth via `?key=` from `NESSIE_KEY` in `server/.env`. Everyone shares one sandbox, so use unique fake names and no real data.
-*   **Verified behaviour:** creates return `{ code: 201, objectCreated: { _id, ... } }`; IDs are UUIDs (not 24-char ObjectIds); `GET /accounts/{id}/purchases` exists and returns 200; a deposit does not change the account `balance`.
-*   **Seeding:** `server/scripts/seed_nessie.py` creates a fresh fake customer (Test Student####), a $1400 checking account, a $900 paycheck deposit and a $700 recurring rent bill, then writes the IDs to `server/data/nessie_ids.json` (committed; IDs aren't secret). Each run creates a new customer.
+*   **Verified behaviour:**
+    *   Creates return `{ code: 201, objectCreated: { _id, ... } }`; IDs are UUIDs (not 24-char ObjectIds).
+    *   `GET/POST /accounts/{id}/purchases` work; a purchase needs a `merchant_id`. Merchant `category` must be a string, not a list.
+    *   **Purchase `amount` is stored as a whole number** (1.23 → 1). We keep the exact price and time in `description` as `SIMULATED | <title> | <price> | <timestamp ms>` and parse it back (`parse_nessie_purchase`).
+    *   Neither deposits nor purchases change the account `balance`.
+    *   **`DELETE /purchases/{id}` returns 403**, so `reset_demo.py` hides existing purchases by ID instead of deleting them.
+*   **Seeding:** `server/scripts/seed_nessie.py` creates a fresh fake customer (Test Student####), a $1400 checking account, a $900 paycheck deposit, a $700 recurring rent bill and an "Amazon (demo)" merchant, then writes the IDs to `server/data/nessie_ids.json` (committed; IDs aren't secret). Each run creates a new customer.
 *   **Still to seed:** recent purchases mapped to merchants, covering every ledger category (e.g. Uber/Lyft → transport, Starbucks → coffee, Whole Foods → groceries, Chipotle → dining, Netflix → subscriptions), with a hardcoded merchant → category mapping using the same keys as `recent_transactions`.
 
 ---
@@ -92,13 +104,12 @@
 ---
 
 ## 5. Status & Next Steps
-Done: overlay UI, interception, service-worker proxy, score engine + tests, seed/Nessie snapshot, Claude explanation + chat with number guard, Nessie seed script.
+Done: overlay UI, interception, service-worker proxy, score engine + tests, seed/Nessie snapshot, Claude explanation + chat with number guard, Nessie seed script, server-driven donut and Recent Ledger, simulated "Buy anyway" purchases (seed file or Nessie).
 Next, roughly in order:
-1.  Return the snapshot from `/evaluate` and drive the charts from it (fixes the mock-vs-server mismatch).
-2.  Aware/Strict action buttons ("Sleep on it", "Make a commitment", "Buy anyway") and a settings UI.
-3.  `/commit`, `/followups`, `/outcome`, `/demo/skip-week`, so the same cart shows a changed score after a follow-up.
-4.  Seed Nessie purchases and feed the Recent Ledger from them.
-5.  Polish: score gauge, cooldown, streaming.
+1.  "Sleep on it" and "Make a commitment" buttons, and a settings UI (mode, floor, budget, buffer).
+2.  `/commit`, `/followups`, `/outcome`, `/demo/skip-week`, so the same cart shows a changed score after a follow-up.
+3.  Drive the Income & Allocation card from server data (needs monthly income and fixed bills in the snapshot).
+4.  Polish: score gauge, cooldown, streaming.
 
 ---
 
@@ -119,12 +130,12 @@ extension/                 # Manifest V3 extension + React overlay (Vite + CRXJS
     format.ts              # formatUsd / formatPercent / formatTimeAgo
     theme.ts               # CHART_COLORS: the only source of data-viz colors
     index.css              # Tailwind entry, injected into the shadow root via ?inline
-    components/            # BudgetDonut, IncomeAllocation, RecentLedger, ChatPanel
+    components/            # BudgetDonut, IncomeAllocation, RecentLedger, ChatPanel, SimulatedBuyButton
 server/                    # FastAPI backend (see 3.3)
   app.py score.py snapshot.py nessie.py llm.py store.py
-  data/                    # seed_snapshot.json, nessie_ids.json (+ git-ignored state.json, commitments.json)
+  data/                    # seed_snapshot.json, nessie_ids.json (+ git-ignored state.json, commitments.json, purchases.json)
   scripts/                 # seed_nessie.py, reset_demo.py
-  tests/                   # test_score.py, test_chat.py
+  tests/                   # test_score.py, test_chat.py, test_purchases.py
   .env.example             # copy to server/.env (git-ignored)
 ```
 Run from `extension/`:
@@ -136,7 +147,7 @@ Run from `extension/`:
 Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/python -m pip install -r requirements.txt`, then copy `.env.example` to `.env`):
 *   `.venv/Scripts/python -m uvicorn app:app --port 3001 --reload`: start the backend.
 *   `.venv/Scripts/python -m pytest`: run the tests. Must pass before any backend change is considered done.
-*   `.venv/Scripts/python scripts/reset_demo.py`: restore default settings and clear commitments; run before every rehearsal.
+*   `.venv/Scripts/python scripts/reset_demo.py`: restore default settings, clear commitments and hide all simulated purchases (both modes); run before every rehearsal.
 *   `.venv/Scripts/python scripts/seed_nessie.py`: create a new fake Nessie customer and update `data/nessie_ids.json`.
 
 ---

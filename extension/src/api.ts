@@ -12,6 +12,7 @@ export interface ChatTurn {
 export type ServerRequest =
   | { type: 'evaluate'; purchase: Purchase }
   | { type: 'chat'; purchase: Purchase; history: ChatTurn[] }
+  | { type: 'purchase'; purchase: Purchase }
 
 type ServerResponse<T> = { ok: true; data: T } | { ok: false; error: string }
 

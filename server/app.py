@@ -15,7 +15,7 @@ load_dotenv()  # before importing modules that read env vars
 import llm  # noqa: E402
 import score  # noqa: E402
 import store  # noqa: E402
-from snapshot import get_financial_snapshot  # noqa: E402
+from snapshot import get_financial_snapshot, record_simulated_purchase  # noqa: E402
 
 app = FastAPI(title="Spend-aware checkout")
 
@@ -29,8 +29,8 @@ app.add_middleware(
 
 
 class Purchase(BaseModel):
-    title: str
-    price: float
+    title: str = Field(max_length=500)
+    price: float = Field(gt=0, le=100_000)
     quantity: int = 1
     category: str = "other"
 
@@ -71,10 +71,28 @@ def health():
     return {"ok": True}
 
 
+def _snapshot_for_ui(snap: dict, state: dict) -> dict:
+    """What the overlay's charts and ledger draw, so they match the numbers the score used."""
+    return {
+        "budget": state["settings"]["budget"],
+        "spent_this_month": snap["spent_this_month"],
+        "balance": snap["balance"],
+        "transactions": snap["transactions"],
+    }
+
+
 @app.post("/evaluate")
 def evaluate(purchase: Purchase):
-    facts = score.evaluate(get_financial_snapshot(), purchase.model_dump(), store.load_state())
-    return {**facts, "message": llm.explain(facts)}
+    snap, state = get_financial_snapshot(), store.load_state()
+    facts = score.evaluate(snap, purchase.model_dump(), state)
+    return {**facts, "message": llm.explain(facts), "snapshot": _snapshot_for_ui(snap, state)}
+
+
+@app.post("/purchase")
+def simulate_purchase(purchase: Purchase):
+    """'Buy anyway' in the overlay. SIMULATED: logs a fake purchase; no order is placed on Amazon."""
+    record_simulated_purchase(purchase.title, purchase.price)
+    return {"snapshot": _snapshot_for_ui(get_financial_snapshot(), store.load_state())}
 
 
 @app.post("/chat")

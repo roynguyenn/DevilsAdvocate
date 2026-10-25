@@ -24,7 +24,7 @@ def _read(path: Path, default):
     return json.loads(path.read_text())
 
 
-def _write(path: Path, data) -> None:
+def write_json(path: Path, data) -> None:
     path.parent.mkdir(exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2))
@@ -36,7 +36,7 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
-    _write(STATE, state)
+    write_json(STATE, state)
 
 
 def load_commitments() -> list:
@@ -44,4 +44,4 @@ def load_commitments() -> list:
 
 
 def save_commitments(items: list) -> None:
-    _write(COMMITMENTS, items)
+    write_json(COMMITMENTS, items)

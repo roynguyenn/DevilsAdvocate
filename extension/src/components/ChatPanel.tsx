@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 
 import { motion } from 'framer-motion'
 import { CheckCircle2, Flame, Scale, SendHorizontal, ShieldX, X } from 'lucide-react'
 import { MAX_USER_TURNS, useInterceptorStore, type VerdictStatus } from '../store'
+import SimulatedBuyButton from './SimulatedBuyButton'
 
 const BADGES: Record<VerdictStatus, { label: string; className: string; Icon: typeof Scale } | null> = {
   idle: null,
@@ -97,7 +98,8 @@ export default function ChatPanel() {
         {isAgentTyping && <p className="pl-9 text-xs text-zinc-500">Thinking…</p>}
       </div>
 
-      <form className="border-t border-zinc-800 bg-zinc-900 p-4" onSubmit={submit}>
+      <SimulatedBuyButton />
+      <form className="bg-zinc-900 p-4" onSubmit={submit}>
         <div className="flex items-end gap-2">
           <textarea
             disabled={!canSend}

@@ -8,3 +8,4 @@ server/data/commitments.json
 server/.env
 extension/dist
 dist
+server/data/purchases.json

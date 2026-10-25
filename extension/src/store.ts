@@ -28,16 +28,29 @@ export interface Transaction {
   category: TransactionCategory
   amount: number
   timestamp: number
+  // True for "Buy anyway" purchases logged by the server; no real order exists.
+  simulated?: boolean
 }
 
-// Shape returned by the server's POST /evaluate (server/score.py evaluate() + message).
+// What the server's charts data looks like (server/app.py _snapshot_for_ui).
+export interface ServerSnapshot {
+  budget: number
+  spent_this_month: number
+  balance: number
+  transactions: Transaction[]
+}
+
+// Shape returned by the server's POST /evaluate (server/score.py evaluate() + message + snapshot).
 export interface Evaluation {
   score_before: number
   score_after: number
   action: 'inform' | 'nudge' | 'block'
   mode: 'aware' | 'strict'
   message: string
+  snapshot: ServerSnapshot
 }
+
+const fromSnapshot = (s: ServerSnapshot) => ({ totalBudget: s.budget, spent: s.spent_this_month, ledger: s.transactions })
 
 interface InterceptorState {
   // Mock financial snapshot — replaced by the backend's cached snapshot during streaming wire-up.
@@ -58,11 +71,13 @@ interface InterceptorState {
   chatHistory: ChatMessage[]
   evaluation: Evaluation | null
   isAgentTyping: boolean
+  purchaseState: 'idle' | 'saving' | 'done'
 
   openIntercept: (item: InterceptedItem) => void
   applyEvaluation: (e: Evaluation) => void
   pushMessage: (role: ChatMessage['role'], content: string) => void
   sendChat: (text: string) => Promise<void>
+  simulatePurchase: () => Promise<void>
   close: () => void
 }
 
@@ -117,6 +132,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   chatHistory: [],
   evaluation: null,
   isAgentTyping: false,
+  purchaseState: 'idle',
 
   openIntercept: (item) =>
     set({
@@ -127,16 +143,42 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
       cartItemImage: item.imageUrl,
       evaluation: null,
       isAgentTyping: false,
+      purchaseState: 'idle',
       chatHistory: [{ id: makeId(), role: 'agent', content: mockOpeningSalvo(get(), item) }],
     }),
 
-  // The server's deterministic score replaces the mock opening message once it arrives.
+  // The server's deterministic score replaces the mock opening message once it arrives, and its snapshot
+  // replaces the mock budget/spent/ledger so the charts match the numbers the score used.
   applyEvaluation: (e) =>
     set({
+      ...fromSnapshot(e.snapshot),
       evaluation: e,
       verdictStatus: e.action === 'block' ? 'blocked' : 'negotiating',
       chatHistory: [{ id: makeId(), role: 'agent', content: `Score ${e.score_before} → ${e.score_after}. ${e.message}` }],
     }),
+
+  // SIMULATED: logs the purchase on the server so the ledger and next score reflect it. The checkout click
+  // stays blocked, so no Amazon order is placed.
+  simulatePurchase: async () => {
+    const { evaluation, purchaseState, cartItemName, cartItemPrice, pushMessage } = get()
+    if (!evaluation || purchaseState !== 'idle') return
+    set({ purchaseState: 'saving' })
+    try {
+      const res = await callServer<{ snapshot: ServerSnapshot }>({
+        type: 'purchase',
+        purchase: { title: cartItemName, price: cartItemPrice },
+      })
+      set({ ...fromSnapshot(res.snapshot), purchaseState: 'done' })
+      pushMessage(
+        'agent',
+        `Logged ${formatUsd(cartItemPrice)} as a simulated purchase. No order was placed. ` +
+          'It now counts toward your spending, so your next check starts from here.',
+      )
+    } catch {
+      set({ purchaseState: 'idle' })
+      pushMessage('agent', "I couldn't reach the server, so nothing was logged.")
+    }
+  },
 
   pushMessage: (role, content) =>
     set((s) => ({ chatHistory: [...s.chatHistory, { id: makeId(), role, content }] })),

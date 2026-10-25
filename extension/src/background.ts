@@ -5,11 +5,14 @@ const SERVER = 'http://localhost:3001'
 
 function toFetch(msg: ServerRequest): { path: string; body: unknown } {
   if (msg.type === 'evaluate') return { path: '/evaluate', body: msg.purchase }
+  if (msg.type === 'purchase') return { path: '/purchase', body: msg.purchase }
   return { path: '/chat', body: { purchase: msg.purchase, history: msg.history } }
 }
 
+const KNOWN_TYPES = new Set<ServerRequest['type']>(['evaluate', 'chat', 'purchase'])
+
 chrome.runtime.onMessage.addListener((msg: ServerRequest, _sender, sendResponse) => {
-  if (msg.type !== 'evaluate' && msg.type !== 'chat') return false
+  if (!KNOWN_TYPES.has(msg.type)) return false
   const { path, body } = toFetch(msg)
   fetch(`${SERVER}${path}`, {
     method: 'POST',
