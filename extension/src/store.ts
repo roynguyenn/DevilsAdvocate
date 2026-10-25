@@ -1,6 +1,5 @@
 import { create } from 'zustand'
 import { callServer, type DecisionOutcome } from './api'
-import { formatUsd } from './format'
 import type { Intensity, Settings } from './settings'
 
 export type VerdictStatus = 'idle' | 'negotiating' | 'blocked' | 'approved'
@@ -252,14 +251,14 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
     get().logDecision('bought')
 
     if (testMode) {
-      set({ purchaseState: recorded ? 'done' : 'idle' })
-      pushMessage(
-        'agent',
-        recorded
-          ? `Logged ${formatUsd(cartTotal)} as a simulated purchase. No order was placed. ` +
-              'It now counts toward your spending, so your next check starts from here.'
-          : "I couldn't reach the server, so nothing was logged.",
-      )
+      if (recorded) {
+        // Simulated purchase logged: close like a real checkout would. "bought" is already logged, so this
+        // close doesn't count as walking away.
+        set({ purchaseState: 'done', isOpen: false, verdictStatus: 'idle' })
+      } else {
+        set({ purchaseState: 'idle' })
+        pushMessage('agent', "I couldn't reach the server, so nothing was logged.")
+      }
       return
     }
 
