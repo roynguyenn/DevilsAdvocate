@@ -43,7 +43,8 @@ class FakeNessie:
 
     def _routes(self):
         return [
-            (r"/customers", {"POST": self._create_customer}),
+            (r"/customers", {"POST": self._create_customer, "GET": lambda: list(self.customers.values())}),
+            (r"/customers/([^/]+)", {"GET": lambda c: self._get(self.customers, c)}),
             (r"/customers/([^/]+)/accounts", {"GET": self._customer_accounts, "POST": self._create_account}),
             (r"/accounts/([^/]+)", {"GET": lambda a: self._get(self.accounts, a)}),
             (r"/accounts/([^/]+)/bills", {"GET": lambda a: self.of_account(self.bills, self._acct(a)),

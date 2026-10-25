@@ -8,7 +8,8 @@
 **Rule 2: Secure by Design.** The extension contains NO API keys. All LLM calls and Nessie API keys live on the backend (`server/.env`). The extension talks to the server only through the background service worker.
 **Rule 3: Checkout Only.** The intercept triggers ONLY on "Buy Now" and "Place your order" actions, NOT on "Add to Cart".
 **Rule 4: The score decides, the LLM only words.** Verdicts (`inform` / `nudge` / `block`) come from `server/score.py`, which is deterministic and unit-tested. Claude receives money facts and the verdict and writes text; it cannot change the verdict, and every number in its output must appear in the facts (or the user's own messages) or the text is replaced with a template.
-**Rule 5: The score is a hidden threshold.** The score, its components, the floor and the mode never reach the user: not in the UI, not in `/evaluate`'s response (except `?debug=true`), and not in Claude's input (`llm.public_facts`). Claude's replies are rejected if they mention a score, rating, threshold, floor or algorithm (`llm.mentions_internals`). The user only ever hears about bills, budget and balance.
+**Rule 5: The score is a hidden heuristic.** `/evaluate` returns `score_before` / `score_after` to the extension, which keeps them in `evaluation` for its own logic (e.g. deciding when the overlay should pop up) but **never renders them**. Claude never sees the score, its components, the floor or the mode (`llm.public_facts`), and its replies are rejected if they mention a score, rating, threshold, floor or algorithm (`llm.mentions_internals`). The user only ever hears about bills, budget and balance.
+**Rule 6: Linking a bank is optional.** Without a bank (popup saved with no account), everything runs on the Finances tab and on purchases made through the extension: `manual.py`, a budget-only score, no balance anywhere (UI, facts, Claude). Linking an account or picking a customer switches back to Nessie.
 
 ---
 
@@ -32,7 +33,7 @@
 *   **Service Worker (`src/background.ts`):** Proxies every backend call (content scripts on https pages can't reliably fetch `http://localhost`). Callers use `callServer()` from `src/api.ts`, which sends a typed `ServerRequest` message (`evaluate`, `chat`, `purchase`, `accounts`, `getProfile` or `saveProfile`) and resolves with the server's JSON. Server errors come back with FastAPI's `detail` text when there is one. No auth session yet.
 
 ### 3.2 Frontend (React UI)
-*   **State:** Use a single `Zustand` store for charts, chat history, and verdict state. Every number the left panel draws comes from the server: `finances` (`monthlyIncome`, `fixedBills`, `savings`, `budget` = discretionary, `spent`, `ledger`) is `null` until `/evaluate` answers (`applyEvaluation`), and `/purchase` refreshes it (`simulatePurchase`). While it's `null`, each card shows `FinancesPlaceholder` ("Loading from your bank…", or "Couldn't load your bank data." after `failEvaluation`). There is no mock financial data. The server's result lives in `evaluation`. Only `intensity` comes from the popup's saved settings (`applySettings`); the income split comes from Nessie, which is where the popup saved it. `dataSource` comes from each snapshot's `source` (shown by `DataSourceBadge`).
+*   **State:** Use a single `Zustand` store for charts, chat history, and verdict state. Every number the left panel draws comes from the server: `finances` (`monthlyIncome`, `fixedBills`, `savings`, `budget` = discretionary, `spent`, `ledger`) is `null` until `/evaluate` answers (`applyEvaluation`), and `/purchase` refreshes it (`buy`). While it's `null`, each card shows `FinancesPlaceholder` ("Loading from your bank…", or "Couldn't load your bank data." after `failEvaluation`). There is no mock financial data. The server's result lives in `evaluation`. Only `intensity` comes from the popup's saved settings (`applySettings`); the income split comes from Nessie, which is where the popup saved it. `dataSource` comes from each snapshot's `source` (shown by `DataSourceBadge`).
 *   **Theme:** Dark overlay (see 7. Code Style → Styling for the exact palette).
 *   **Animations:** Use `Framer Motion` for a smooth slide-in/fade-in of the overlay.
 *   **Layout:** Two-panel split view sliding in from the right (stacks vertically below the `md` breakpoint).
@@ -46,7 +47,8 @@
         *   Testing-mode banner under the header (`TestModeBanner`) while testing mode is on.
         *   Chat window. The first agent message is Claude's explanation (money only, no score; Rule 5). Replies arrive whole (not streamed). Agent bubbles are amber-tinted; user bubbles are zinc.
         *   User input: enabled once `evaluation` is set, disabled while the agent is replying, and closed (`chatClosed`, placeholder "Time to decide.") when `/chat` returns `done: true`. **The reply cap is hidden:** the extension doesn't know or show it, so there's no countdown to bargain against. Enter sends, Shift+Enter adds a newline. Sending goes through the store action `sendChat`.
-        *   **"Buy anyway (simulated)"** (`SimulatedBuyButton`, store action `simulatePurchase`): logs the item as a fake purchase via `POST /purchase`, then updates the ledger and spent from the returned snapshot. The checkout click stays blocked, so no Amazon order is placed. One click per intercept.
+        *   **How the student decides** (no extra buttons; `DecisionBar` is just a hint line): closing the overlay (X / outside) returns to the checkout with the decision still open. **Clicking Place your order again for the same cart** (`content.isConfirmingPurchase`, matched by cart title + total) is the decision to buy: `confirmPurchase` records the purchase (Nessie, or the Finances-tab log) and logs `bought`. In **Testing mode** that click is blocked, so nothing is ordered, and a toast confirms it (`NoticeToast`); in **Live mode** the click goes on to Amazon. **Left checkout** (still deciding, not a "no") is logged when they check out a different cart, or on `pagehide` (best effort).
+        *   **Live-mode pass-through** (`content.tsx`): a confirmed click opens a ≤1.5 s window so its form submit reaches Amazon; it closes as soon as that submit passes, so a further click is intercepted again. The order goes through only on the student's second, explicit Place Order click, never because of a verdict.
         *   *Not yet built:* "Sleep on it 24h" and "Make a commitment" buttons; cooldown.
 
 ### 3.2.1 Configuration Popup (`src/popup/`)
@@ -54,11 +56,12 @@
 *   **No scrolling:** each section must fit the panel area (≈384px between the tabs and the save bar). Check `main.scrollHeight <= clientHeight` when changing a section's content.
 *   **Navigation:** the popup opens on the first incomplete section. Linking a bank during first-time setup moves on to Finances. When saving is blocked by a field on another tab, the hint under the save button links to that tab.
 *   **Account Connection:** an amber "Connect Bank Account" button opens a Capital One / Nessie sign-in modal (`src/api/bank.ts`). The account list is the demo customer's real Nessie checking accounts (`GET /accounts`); only the sign-in step is simulated (Nessie has no OAuth). Linking prefills an empty Finances tab with what the bank holds (`GET /profile?account_id=`). Once linked, it shows a green "Linked: <nickname> ending in ****1234" with a Disconnect link. **Never** add a credential or API-key field: the real flow goes through the backend, and the extension stores only `{ id, nickname, last4 }`.
+*   **Customer dropdown** (`CustomerPicker`, top of the Account tab; dev/demo control): lists the Nessie customers the key can see (`GET /customers`) and switches the server to one (`PUT /customer`). **Config is per customer:** finances live in Nessie on that customer's account, and the linked account and intensity are kept per customer on the server, so switching loads theirs into the popup (`switchCustomer`). Save sends the intensity with the finances.
 *   **Financial Baseline & Allocation (Finances tab):** a large monthly net income input, a live `AllocationBar` preview, and a currency input plus slider for Fixed Bills (gray), Savings (green) and Discretionary (blue).
     *   **Rebalancing:** editing income, fixed bills or savings auto-fills discretionary with the remainder. A manual discretionary override rebalances **savings only**; fixed bills are real obligations and never move automatically.
     *   **Validation:** math is done in whole cents. Over-allocation shows a hatched red tail on the bar and blocks saving.
 *   **Agent Intervention:** a three-card radiogroup: Light / The Gentle Nudge (yellow caution icon), Medium / The Negotiator (amber scales, default), Harsh / The Interrogator (red flame). Harsh's cooling-off rule comes from `HARSH_COOLDOWN` in `src/settings.ts` (5 minutes, over 10% of the budget). The intensity currently only changes the placeholder line shown before the score arrives; the real prompt and cooldown behavior arrive with the backend.
-*   **Save bar:** saving sends the account and the Finances tab to the server (`PUT /profile`), which writes them to Nessie and returns what Nessie now holds; that read-back is what gets stored in `chrome.storage`. If the server or Nessie fails, nothing is stored and the error shows under the button (`saveError`). "Save & Activate Interceptor" stays disabled, with the reason shown underneath, until a bank is linked and the split equals 100% of a positive income. After activation the button reads "Save Changes" and is only enabled when something has changed.
+*   **Save bar:** saving sends the Finances tab (and the linked account, if any) to `PUT /profile`. With an account it's written to Nessie (bank mode); with none, the server keeps it and scores from the Finances tab alone (Rule 6). The account link is optional: Save & Activate and the Enabled switch only need a balanced split of a positive income. The server's read-back is what gets stored in `chrome.storage`; an error shows in the save bar.
 *   **Testing / Live switch** (`TestModeSwitch`, under the Enabled switch): stored as its own `testMode` key in `chrome.storage.local` (not part of `Settings`, so it's never an unsaved edit), **default ON**. While on, the content script blocks every order click on checkout pages, even with the interceptor disabled or setup unfinished, and also catches order buttons that `CHECKOUT_SELECTORS` misses by their label (`ORDER_LABEL`: place order, buy now, submit/complete order, pay now; whitespace-collapsed). Nothing can be ordered. Turn it to Live only on purpose.
 *   **Enabled/Disabled switch:** pauses the interceptor without uninstalling the extension or losing settings. It flips only the persisted `settings.active` (unsaved draft edits are untouched), and open checkout tabs pick up the change live.
     *   **Disabling** requires confirming in a dialog ("Keep it on" is the focused default). This is deliberate friction: turning it off is the easy escape for an impulse buyer.
@@ -77,15 +80,21 @@
         *   `spent_this_month` = purchases dated this month. `balance` = Nessie balance − simulated purchases (Nessie never deducts purchases; seeded spending is already reflected in the starting balance).
         *   `record_simulated_purchase(title, price)` creates a purchase on the linked account at the Amazon.com merchant.
     *   `demo_data.py`: `seed_customer(seed, last_name)` and `reset_demo()`, shared by the scripts and the tests.
+    *   `customers.py`: `list_customers()` and `select_customer(id)`, which rewrites `nessie_ids.json` (customer, checking, savings; the demo merchant carries over). Refuses a customer with no checking account.
+    *   `manual.py`: Finances-tab-only mode. `bank_linked()` (state.json `bank_linked`, default true) picks the data source for every route (`app._snapshot`, `app._profile_key`). Stores the tab's plan and the purchases made through the extension under `state.json` → `manual`; `snapshot()` has the usual shape with `balance: None` and `source: { type: "manual" }`. Decision log and intensity use the profile key `"manual"`.
+    *   `decisions.py`: the per-customer decision log. `record(title, price, outcome, history)` stores `{ title, price, outcome: bought|left_checkout, summary, timestamp }` (last 50), with `summary` from `llm.summarize_decision` (1-2 lines: what they did and their own stated reason; template fallback). `relevant(title)` returns up to 3 summaries for a similar item (word overlap ≥ 50% of the shorter title, `similar()`), newest first.
     *   `nessie.py`: thin client on one pooled `httpx.Client`. Errors are re-raised as `NessieError` without the URL, because the URL carries the API key; routes turn them into a 502. A trailing slash in `NESSIE_BASE` is stripped.
-    *   `llm.py`: `explain(facts)` and `chat(facts, title, history, final)`. Both pass only `public_facts` (price, balance_after, monthly_bills, budget_left_after, action) to Claude, through `_grounded_or`, which falls back to `template_message` when there's no key, the API errors, Claude refuses, `numbers_are_grounded` fails, or `mentions_internals` matches. The persona and per-verdict instructions live in `SYSTEM` / `CHAT_SYSTEM`.
-    *   `store.py`: reads/writes `data/state.json` (settings, `regret_penalty`, `blocks_this_week`, linked `account_id`, `ignored_nessie_purchases`) and `data/commitments.json`, via temp file + rename. Both files are git-ignored, recreated from defaults, and merged over the defaults on load. No money lives here.
+    *   `llm.py`: `explain(facts, intensity)` and `chat(facts, title, history, final, intensity)`. Prompts are built from `ROLE` + a persona from `PERSONAS` (the popup's Agent setting, saved per customer: light = The Gentle Nudge, medium = The Negotiator, harsh = The Interrogator) + `STANCE` + `INFORM` + `ANGLES` + `LINKING` (+ `CHAT_INSTRUCTIONS`, + `FINAL_TURN` on the last reply) + `RULES` (`system_prompt` / `chat_system_prompt`). Claude gets only `public_facts`: price, balance_after, monthly_bills, budget_left_after, action, `recent_purchases` (last 8 as `{ merchant, category, amount, when, item? }`, with `item` when we know the product, i.e. purchases made through the extension in no-bank mode, with `when` written out by the server, e.g. "2 days ago"), `past_decisions`, and `angles_used` (not populated yet). Everything goes through `_grounded_or`, which falls back to a template when there's no key, the API errors, Claude refuses, `numbers_are_grounded` fails, or `mentions_internals` matches.
+    *   `store.py`: reads/writes `data/state.json` (global: settings, `regret_penalty`, `blocks_this_week`, `ignored_nessie_purchases`; per customer under `customers[<customer_id>]`: linked `account_id`, `intensity`, `decisions`) and `data/commitments.json`, via temp file + rename. Both files are git-ignored. `reset_demo` restores defaults, which also clears every customer's decision log and links.
 *   **Endpoints:**
     *   `GET /health` → `{ ok: true, source }`, where `source` is `{ type: "nessie", customer_id, account_id, customer_name }` for the linked account (local files only, no Nessie call). The same `source` is in every snapshot, and the overlay shows it at the bottom of the left panel (`DataSourceBadge`).
-    *   `POST /evaluate` `{ title, price, quantity?, category? }` → `{ action, message, snapshot }`, where `snapshot` is `{ monthly_income, monthly_bills, savings, budget, spent_this_month, balance, transactions, source }` for the UI. The score never leaves the server (Rule 5); `?debug=true` adds `debug` with the full facts (`score_before`, `score_after`, `components_after`, `monthly_bills`, `budget_left_after`, `floor`, …) for development and tests. The extension never asks for it.
+    *   `POST /evaluate` `{ title, price, quantity?, category? }` → `{ action, score_before, score_after, message, snapshot }`, where `snapshot` is `{ monthly_income, monthly_bills, savings, budget, spent_this_month, balance, transactions, source }` for the UI. The score is for the extension's logic only, never shown (Rule 5); `?debug=true` adds `debug` with the full facts (`score_before`, `score_after`, `components_after`, `monthly_bills`, `budget_left_after`, `floor`, …) for development and tests. The extension never asks for it.
     *   `POST /purchase` `{ title, price }` → `{ snapshot }`. **SIMULATED** "Buy anyway": records a fake purchase in Nessie so the ledger and the next score reflect it. Nothing is ordered anywhere.
     *   `POST /chat` `{ purchase, history: [{ role: user|assistant, content }] }` → `{ reply, done }`. History must end with a user turn. On the user's `MAX_USER_TURNS`th (3rd) reply, Claude gets `llm.FINAL_TURN`: sum up, hand them the decision (buy anyway or walk away), no question, never mention a limit; the response has `done: true`. More than 3 user turns returns `llm.closing_message` with `done: true` without calling Claude. Facts are recomputed server-side, never taken from the client.
     *   `GET /accounts` → `[{ id, nickname, last4 }]`: the demo customer's checking accounts (no balances).
+    *   `GET /customers` → `{ current, customers: [{ id, name }] }`; `PUT /customer` `{ customer_id }` → `{ customer, profile }` (409 if they have no checking account).
+    *   `POST /decision` `{ purchase, history, outcome: bought|left_checkout }` → the stored log entry; `GET /decisions` → this customer's log (dev). `/evaluate` and `/chat` add `past_decisions` (summaries for a similar item) to the facts Claude sees; they change wording only, never the verdict.
+    *   `GET|PUT /profile` also carry `intensity` (saved per customer).
     *   `GET /profile[?account_id=]` → `{ account, monthly_income, fixed_bills, savings, discretionary }` as Nessie holds it, for the linked account or a preview of `account_id`. 404 if it isn't one of the customer's checking accounts.
     *   `PUT /profile` `{ account_id, monthly_income, fixed_bills, savings, discretionary }` → same shape, read back from Nessie after writing. Validated: income > 0, parts ≥ 0, and fixed + savings + discretionary = income in whole cents (422 otherwise). 409 if the account's other bills already exceed `fixed_bills`. Also links the account (`state.account_id`).
     *   `GET|PUT /settings` `{ buffer_target, mode: aware|strict, floor }`. The budget is not a setting; it comes from the profile.
@@ -115,17 +124,25 @@
 ## 4. Score & Agent Design
 
 **Step 1: Financial score (deterministic, `server/score.py`).**
+*   **No bank linked (`compute_budget_only`):** `budget = clamp(100 × (budget − spent − price) ÷ budget)` (70%) and `size = clamp(100 × (1 − price ÷ budget))` (30%), minus `regret_penalty`. Worked example ($400 budget, $150 spent, $180 item): 74 → 29. Facts then carry `formula: "budget_only"` and no `balance_after`.
 *   `balance_after = balance − price`; `left_after = budget − spent − price`.
 *   `bills = clamp(100 × (balance_after / monthly_bills − 1))` (100 if no bills); `budget = clamp(100 × left_after / budget)`; `buffer = clamp(100 × (balance_after − monthly_bills) / buffer_target)`; each clamped to 0–100.
 *   `score = 0.5 × bills + 0.3 × budget + 0.2 × buffer − regret_penalty[category]`, rounded. "Before" is the same with price 0. Worked example (seeded Nessie customer, $180 item): 89 → 62.
 *   Weights are tunable defaults, not research. `budget` is the discretionary amount from the user's Nessie profile (popup); buffer target and floor are settings.
 
-**Step 2: Verdict (`decide`).**
-*   **Strict** (opt-in, with a floor): `score_after < floor` → `block`. After 3 blocks in a week, Strict behaves like Aware.
-*   **Aware** (default, never blocks): drop ≥ 15 points or `score_after < 50` → `nudge`; otherwise `inform`.
-*   The user can always override.
+**Step 2: Verdict (`decide`).** The popup's Agent setting (saved per customer) picks the thresholds as well as Claude's persona (`score.INTENSITY_RULES`, `rules_for`):
 
-**Step 3: Claude wording (`llm.explain`).** Persona: a blunt but kind friend at checkout. Gets `public_facts` only, writes 2–3 plain sentences about bills, budget and balance: `inform` = "you're fine to buy this if you'd like" + one note on what it leaves, `nudge` = suggest sleeping on it, `block` = "this order is on hold" + one commitment question. Number guard, internals guard, template fallback (Rules 4–5).
+| Agent setting | Mode | Nudge when | Blocks when |
+|---|---|---|---|
+| Light (The Gentle Nudge) | Aware | the score drops 25+ or ends below 40 | never |
+| Medium (The Negotiator), default | Aware | drops 15+ or ends below 50 | never |
+| Harsh (The Interrogator) | Strict | drops 15+ or ends below 50 | the score ends below the floor, 70 |
+
+*   Otherwise the action is `inform` (Approved). After 3 blocks in a week, Strict behaves like Aware.
+*   `PUT /settings` mode/floor no longer drive `/evaluate` or `/chat`; they're only the fallback for callers that pass no rules (`rules_from_settings`). `buffer_target` still comes from `/settings`.
+*   The user can always override: closing the overlay and clicking Place your order again is always allowed.
+
+**Step 3: Claude wording (`llm.explain`).** A sharp, warm friend who argues the case against the purchase from the student's own money and history, in the persona the student picked. It picks the single strongest angle (already bought something similar, price vs. what's left, opportunity cost, want vs. need, why now, how a past purchase went, cost per use) and links the item to `recent_purchases` / `past_decisions` only when the facts support it. `inform` = "you're fine to buy this if you'd like" + one note, `nudge` = one real doubt, `block` = a clear position against it. Number guard, internals guard, template fallback (Rules 4–5).
 
 **Step 4: Chat (`llm.chat`, `POST /chat`).**
 *   Answers questions about this purchase in 1–3 sentences using the facts. It cannot approve, unblock or change the score, and says so when asked. It can't verify claims about how the item will be used.
@@ -133,6 +150,8 @@
 *   The scraped item title is untrusted page text and is passed as data.
 
 **Step 5: Follow-up loop (planned).** Commitments with a follow-up date; answers "used / returned / unused" adjust `regret_penalty` (+5 per returned/unused, max 15; −3 per used, min 0). "Saved" money counts only if a blocked/abandoned purchase isn't bought within 7 days; in the demo that time-skip is SIMULATED and labeled.
+
+**Step 6: Decision memory.** Every finished checkout is logged per customer: `bought` when the student closes the overlay and clicks Place your order again for the same cart (`confirmPurchase`), `left_checkout` when they check out a different cart or leave the page (not a "no": they may still be deciding or saving it for later; older `walked_away` entries are read the same way) (`logDecision`, once per checkout). Claude summarizes the chat into 1-2 lines with the outcome and the student's reason. On a later checkout of a similar item, those lines go to Claude as `past_decisions`, so it can say e.g. "last time you held off on these until after rent". Same guards as all LLM text (numbers, internals).
 
 ---
 
@@ -165,12 +184,12 @@ extension/                 # Manifest V3 extension + React overlay (Vite + CRXJS
     format.ts              # formatUsd / formatPercent / formatTimeAgo
     theme.ts               # CHART_COLORS: the only source of data-viz colors
     index.css              # Tailwind entry, injected into the shadow root via ?inline
-    components/            # BudgetDonut, IncomeAllocation, AllocationBar (shared w/ popup), RecentLedger, FinancesPlaceholder, CartItems, ChatPanel, SimulatedBuyButton, TestModeBanner, DataSourceBadge
+    components/            # BudgetDonut, IncomeAllocation, AllocationBar (shared w/ popup), RecentLedger, FinancesPlaceholder, CartItems, ChatPanel, DecisionBar, NoticeToast, TestModeBanner, DataSourceBadge
 server/                    # FastAPI backend (see 3.3)
-  app.py score.py finances.py snapshot.py demo_data.py nessie.py llm.py store.py
+  app.py score.py finances.py snapshot.py manual.py customers.py decisions.py demo_data.py nessie.py llm.py store.py
   data/                    # seed_data.json, nessie_ids.json (+ git-ignored state.json, commitments.json)
   scripts/                 # seed_nessie.py, reset_demo.py, nessie_customer.py, show_nessie.py
-  tests/                   # fake_nessie.py (in-memory Nessie), test_score.py, test_finances.py, test_purchases.py, test_chat.py, test_nessie_live.py
+  tests/                   # fake_nessie.py (in-memory Nessie), test_score.py, test_finances.py, test_purchases.py, test_chat.py, test_customers_and_memory.py, test_prompts.py, test_manual_mode.py, test_nessie_live.py
   .env.example             # copy to server/.env (git-ignored)
 ```
 Run from `extension/`:
@@ -185,6 +204,7 @@ Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/
 *   `NESSIE_LIVE=1 .venv/Scripts/python -m pytest tests/test_nessie_live.py`: the same round trip against the real sandbox (creates a throwaway customer; ~30 s).
 *   `.venv/Scripts/python scripts/reset_demo.py`: restore default settings and the seed profile in Nessie, clear commitments, and hide simulated purchases (seeded ones stay); run before every rehearsal.
 *   `.venv/Scripts/python scripts/seed_nessie.py`: create a new fake Nessie customer and update `data/nessie_ids.json`.
+*   `.venv/Scripts/python scripts/seed_test_students.py`: create the five test students from `data/test_students.json` (SteadySaver, RentCrunch, OverBudget, ImpulseShopper, FreshPaycheck: one per money situation) and print each one's verdicts at $60 / $180 / $600. Leaves the current customer unchanged; switch with the popup's Customer dropdown.
 *   `.venv/Scripts/python scripts/nessie_customer.py list | show <id> | use <id>`: list every customer the key can see (all fields + accounts), dump one customer's accounts/bills/deposits/purchases, or switch the server to that customer (live, no restart). `scripts/show_nessie.py` = `show` for the current customer.
 *   Nessie deletes (tested on a throwaway customer): bills, deposits and accounts can be deleted; **purchases and customers cannot** (no such route). Never call bulk `DELETE /data`: it wipes the demo customer too.
 
@@ -202,7 +222,7 @@ Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/
 ### React & State
 *   Function components only, one component per file in `src/components/` (small private helpers such as `VerdictBadge` may live alongside their parent).
 *   **One Zustand store per surface**: `src/store.ts` for the overlay, `src/popup/store.ts` for the popup (separate JS contexts that share state only through `chrome.storage`). Components read with narrow selectors (`useInterceptorStore((s) => s.spent)`), never the whole store. Non-React code (the content script) uses `useInterceptorStore.getState()`.
-*   State changes go through named store actions (`openIntercept`, `applySettings`, `applyEvaluation`, `pushMessage`, `sendChat`, `simulatePurchase`, `setDiscretionary`, …); components never call `setState` directly.
+*   State changes go through named store actions (`openIntercept`, `applySettings`, `applyEvaluation`, `pushMessage`, `sendChat`, `buy`, `setDiscretionary`, …); components never call `setState` directly.
 *   Backend calls go through `callServer()` in `src/api.ts`, never `fetch` from the content script or components.
 *   Zustand v5: a selector that returns a new object or array (e.g. `selectAllocation`) **must** be wrapped in `useShallow`, or the component re-renders forever.
 *   Money is a `number` in dollars; render it only through `formatUsd()` (and percentages through `formatPercent()`) from `src/format.ts`.
@@ -242,7 +262,7 @@ Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/
 
 ### Security
 *   No API keys, secrets, or backend tokens in `extension/` (Rule 2). Everything in the bundle is public. Keys live only in `server/.env`, which is git-ignored; never print them (Nessie URLs contain the key).
-*   The verdict comes from the server's score, never from client state or from the LLM. Never release the checkout lock based on client-side state such as `verdictStatus === 'approved'` (a server-signed unblock token is planned).
+*   The verdict comes from the server's score, never from client state or from the LLM. The checkout lock lets an order through only on the student's second, explicit Place your order click in Live mode (the user can always override), never because of a verdict or `verdictStatus === 'approved'`. Never in Testing mode.
 *   Never let LLM output change a score, mode or verdict. Keep the number guard on every LLM text path, and recompute facts server-side rather than accepting them from the client.
 *   Scraped image URLs are accepted only if they start with `https://`.
 *   Scraped Amazon text is untrusted: render it as React text (never `dangerouslySetInnerHTML`), and treat it as data, not instructions, when passing it into LLM prompts.

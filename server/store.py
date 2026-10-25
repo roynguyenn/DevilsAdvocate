@@ -18,8 +18,15 @@ DEFAULT_STATE = {
     "settings": {"buffer_target": 300, "mode": "aware", "floor": 70},
     "regret_penalty": {},
     "blocks_this_week": 0,
-    "account_id": None,  # Nessie checking account linked in the popup; None means the seeded one
     "ignored_nessie_purchases": [],
+    # Per Nessie customer, keyed by customer_id: what the bank has no field for (see DEFAULT_CUSTOMER).
+    "customers": {},
+}
+
+DEFAULT_CUSTOMER = {
+    "account_id": None,  # checking account linked in the popup; None means the seeded one
+    "intensity": "medium",  # the popup's Agent tab: light | medium | harsh
+    "decisions": [],  # one summarized line per finished checkout (decisions.py)
 }
 
 
@@ -43,6 +50,17 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     write_json(STATE, state)
+
+
+def load_customer(customer_id: str) -> dict:
+    saved = load_state()["customers"].get(customer_id, {})
+    return {**json.loads(json.dumps(DEFAULT_CUSTOMER)), **saved}
+
+
+def save_customer(customer_id: str, data: dict) -> None:
+    state = load_state()
+    state["customers"][customer_id] = data
+    save_state(state)
 
 
 def load_commitments() -> list:

@@ -264,11 +264,44 @@ function applyTestMode(on: boolean) {
   useInterceptorStore.getState().setTestMode(on)
 }
 
+// In Live mode a confirmed purchase's click goes on to Amazon, and a submit button then fires a submit event that
+// must pass too. This window lets exactly that through; it closes as soon as the submit passes (or after 1.5 s).
+let passUntil = 0
+const PASS_WINDOW_MS = 1500
+const isPassing = () => Date.now() < passUntil
+
+const cartKey = (cart: InterceptedCart) => `${cartTitle(cart.items)}|${cart.total}`
+
+// Is this click the student's second Place Order for the cart they were just shown? Then it's their decision to buy.
+// Any error here falls back to a normal intercept (fail closed).
+function isConfirmingPurchase(): boolean {
+  try {
+    const s = useInterceptorStore.getState()
+    if (!s.evaluation || s.decisionLogged || s.isOpen || s.cartTotal === null) return false
+    return cartKey(scrapeCheckout()) === cartKey({ items: s.cart, total: s.cartTotal } as InterceptedCart)
+  } catch {
+    return false
+  }
+}
+
 function intercept(e: Event) {
   // A paused interceptor lets orders through, except in testing mode, where nothing is ever ordered.
   if (interceptorActive === false && !testMode) return
+  if (isConfirmingPurchase()) {
+    // Testing mode: block it, so the purchase is only recorded. Live mode: let this click (and its submit) through.
+    if (testMode) {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+    } else {
+      passUntil = Date.now() + PASS_WINDOW_MS
+    }
+    void useInterceptorStore.getState().confirmPurchase()
+    return
+  }
   e.preventDefault()
   e.stopImmediatePropagation()
+  // A different cart means the previous one was left behind.
+  useInterceptorStore.getState().logDecision('left_checkout')
   const cart = scrapeCheckout()
   useInterceptorStore.getState().openIntercept(cart)
   requestEvaluation(cart)
@@ -289,16 +322,28 @@ function requestEvaluation(cart: InterceptedCart) {
 // Capture-phase delegation on window: runs before Amazon's own handlers and survives the
 // button being re-rendered (address/payment changes swap out the checkout DOM).
 function onClick(e: MouseEvent) {
-  if (isOrderControl(e.target as Element | null)) intercept(e)
+  const target = e.target as Element | null
+  if (isPassing()) {
+    // A submit button fires a submit next, so keep the window open for it; otherwise close it now.
+    if (!(target as HTMLButtonElement | HTMLInputElement | null)?.form) passUntil = 0
+    return
+  }
+  if (isOrderControl(target)) intercept(e)
 }
 
 // Catches keyboard submission (Enter) of the order form, which never fires a click on the button. A submit with
 // no submitter (form.submit() from script) is caught in testing mode if the form holds an order button.
 function onSubmit(e: SubmitEvent) {
+  if (isPassing()) {
+    passUntil = 0 // the confirmed order went through; anything after this is intercepted again
+    return
+  }
   const form = e.target as HTMLFormElement | null
   const formHasOrderButton = Boolean(form?.querySelector?.(CHECKOUT_SELECTORS)) ||
     Array.from(form?.querySelectorAll?.(CLICKABLE) ?? []).some((el) => looksLikeOrderControl(el))
-  if (isOrderControl(e.submitter) || (testMode && !e.submitter && formHasOrderButton)) intercept(e)
+  if (isOrderControl(e.submitter) || (testMode && !e.submitter && formHasOrderButton)) {
+    intercept(e)
+  }
 }
 
 function init() {
@@ -309,6 +354,9 @@ function init() {
   onSettingsChanged(applySettings)
   loadTestMode().then(applyTestMode, () => applyTestMode(true))
   onTestModeChanged(applyTestMode)
+  // Leaving the checkout without clicking Place your order again means they left it for now (best effort: the
+  // message may not make it out if the tab is closing).
+  window.addEventListener('pagehide', () => useInterceptorStore.getState().logDecision('left_checkout'))
   mountOverlay()
   window.addEventListener('click', onClick, true)
   window.addEventListener('submit', onSubmit, true)
