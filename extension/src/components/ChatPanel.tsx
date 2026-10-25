@@ -55,7 +55,7 @@ export default function ChatPanel() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900 px-5 py-4">
+      <header className="flex items-center justify-between border-b border-zinc-800 bg-panel px-5 py-4">
         <div className="flex items-center gap-3">
           <h2 className="text-sm font-semibold text-zinc-100">Devil's Advocate</h2>
           <VerdictBadge />
@@ -99,7 +99,7 @@ export default function ChatPanel() {
       </div>
 
       <SimulatedBuyButton />
-      <form className="bg-zinc-900 p-4" onSubmit={submit}>
+      <form className="bg-panel p-4" onSubmit={submit}>
         <div className="flex items-end gap-2">
           <textarea
             disabled={!canSend}

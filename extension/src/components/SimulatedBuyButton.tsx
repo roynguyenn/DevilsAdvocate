@@ -14,7 +14,7 @@ export default function SimulatedBuyButton() {
   const simulatePurchase = useInterceptorStore((s) => s.simulatePurchase)
 
   return (
-    <div className="flex items-center justify-between gap-3 border-t border-zinc-800 bg-zinc-900 px-4 pt-3">
+    <div className="flex items-center justify-between gap-3 border-t border-zinc-800 bg-panel px-4 pt-3">
       <p className="text-xs text-zinc-500">Demo only: nothing is ordered on Amazon.</p>
       <button
         type="button"

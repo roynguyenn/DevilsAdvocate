@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App'
 import { callServer } from './api'
 import styles from './index.css?inline'
+import { loadSettings, onSettingsChanged, type Settings } from './settings'
 import { useInterceptorStore, type Evaluation, type InterceptedItem } from './store'
 
 const HOST_ID = 'devils-advocate-host'
@@ -74,7 +75,16 @@ function scrapeCheckout(): InterceptedItem {
   }
 }
 
+// null until chrome.storage answers. Treated as active so a click during startup is still caught (fail closed).
+let interceptorActive: boolean | null = null
+
+function applySettings(settings: Settings) {
+  interceptorActive = settings.active
+  if (settings.active) useInterceptorStore.getState().applySettings(settings)
+}
+
 function intercept(e: Event) {
+  if (interceptorActive === false) return
   e.preventDefault()
   e.stopImmediatePropagation()
   const item = scrapeCheckout()
@@ -102,6 +112,11 @@ function onSubmit(e: SubmitEvent) {
 }
 
 function init() {
+  loadSettings().then(applySettings, () => {
+    // Storage unreadable: keep intercepting with mock data rather than letting the order through.
+    interceptorActive = true
+  })
+  onSettingsChanged(applySettings)
   mountOverlay()
   window.addEventListener('click', onClick, true)
   window.addEventListener('submit', onSubmit, true)

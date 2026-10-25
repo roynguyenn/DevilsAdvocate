@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { callServer } from './api'
 import { formatUsd } from './format'
+import type { Intensity, Settings } from './settings'
 
 // Mirrors MAX_USER_TURNS in server/app.py, which is the one that actually enforces it.
 export const MAX_USER_TURNS = 3
@@ -53,11 +54,14 @@ export interface Evaluation {
 const fromSnapshot = (s: ServerSnapshot) => ({ totalBudget: s.budget, spent: s.spent_this_month, ledger: s.transactions })
 
 interface InterceptorState {
-  // Mock financial snapshot — replaced by the backend's cached snapshot during streaming wire-up.
+  // Income split comes from the popup's saved Settings; the rest is a mock financial snapshot,
+  // replaced by the backend's cached snapshot during streaming wire-up.
   monthlyIncome: number
   fixedBills: number
-  // Discretionary budget for the month; savings is whatever income is left after bills and this.
+  savings: number
+  // Discretionary budget for the month.
   totalBudget: number
+  intensity: Intensity
   spent: number
   daysUntilPayday: number
   ledger: Transaction[]
@@ -73,6 +77,7 @@ interface InterceptorState {
   isAgentTyping: boolean
   purchaseState: 'idle' | 'saving' | 'done'
 
+  applySettings: (settings: Settings) => void
   openIntercept: (item: InterceptedItem) => void
   applyEvaluation: (e: Evaluation) => void
   pushMessage: (role: ChatMessage['role'], content: string) => void
@@ -98,7 +103,11 @@ const MOCK_LEDGER: Transaction[] = [
   { id: 't9', merchant: 'Amazon.com', category: 'shopping', amount: 64.0, timestamp: hoursAgo(240) },
 ]
 
-export const selectSavings = (s: InterceptorState) => Math.max(s.monthlyIncome - s.fixedBills - s.totalBudget, 0)
+const CLOSING_LINE: Record<Intensity, string> = {
+  light: 'Are you sure you want this?',
+  medium: 'Defend this purchase.',
+  harsh: "That's money you promised to your savings goal. Convince me, and make it good.",
+}
 
 function mockOpeningSalvo(s: InterceptorState, item: InterceptedItem): string {
   const remaining = s.totalBudget - s.spent
@@ -111,14 +120,16 @@ function mockOpeningSalvo(s: InterceptorState, item: InterceptedItem): string {
   return (
     `You've already spent ${formatUsd(s.spent)} of your ${formatUsd(s.totalBudget)} ` +
     `discretionary budget this month. "${item.name}" eats another ${pct}% of it and ${outcome} ` +
-    `until payday. Defend this purchase.`
+    `until payday. ${CLOSING_LINE[s.intensity]}`
   )
 }
 
 export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   monthlyIncome: 4500,
   fixedBills: 1800,
+  savings: 1900,
   totalBudget: 800,
+  intensity: 'medium',
   spent: 540,
   daysUntilPayday: 9,
   ledger: MOCK_LEDGER,
@@ -133,6 +144,15 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   evaluation: null,
   isAgentTyping: false,
   purchaseState: 'idle',
+
+  applySettings: (settings) =>
+    set({
+      monthlyIncome: settings.monthlyIncome,
+      fixedBills: settings.fixedBills,
+      savings: settings.savings,
+      totalBudget: settings.discretionary,
+      intensity: settings.intensity,
+    }),
 
   openIntercept: (item) =>
     set({

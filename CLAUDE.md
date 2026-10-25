@@ -25,11 +25,13 @@
 *   **Checkout URLs:** Amazon serves checkout at `https://www.amazon.com/checkout/*` (current "Chewbacca" pipeline, e.g. `/checkout/p/p-<id>/spc`) and the legacy `https://www.amazon.com/gp/buy/spc/handlers/display.html*`. `manifest.json` `host_permissions` and `content_scripts.matches` must list both and stay in sync. `host_permissions` also lists `http://localhost:3001/*` for the backend.
 *   **DOM Interceptor:** Content script listens for clicks on checkout buttons (`#placeYourOrder1`, `#submitOrderButtonId`, `#bottomSubmitOrderButtonId`, or exact "Buy Now" selectors). Selectors live in one `CHECKOUT_SELECTORS` list in `src/content.tsx`. "Buy Now" is not yet implemented.
 *   **Scraper:** On click, `preventDefault()` is called. Scrape the DOM for: `item_title`, `price`, `image_url` (thumbnail, `https://` only), and `category`. Every field falls back to mock values when a selector misses. `category` is not scraped yet, and the image selectors are unverified against the live Chewbacca checkout.
+*   **Activation gate:** The content script only intercepts while `settings.active` is true: it's set by **Save & Activate** in the popup and cleared by the popup's Disable switch. Until `chrome.storage` answers, it intercepts anyway (fail closed). If storage can't be read, it keeps intercepting with mock data.
 *   **Shadow DOM Root:** Mount the React application inside a Shadow DOM to completely isolate it from Amazon's global CSS.
-*   **Service Worker (`src/background.ts`):** Proxies every backend call (content scripts on https pages can't reliably fetch `http://localhost`). Callers use `callServer()` from `src/api.ts`, which sends a typed `ServerRequest` message (`evaluate` or `chat`) and resolves with the server's JSON. No auth session yet.
+*   **Toolbar Popup (Configuration):** `action.default_popup` → `src/popup/index.html`, shown when the user clicks the extension icon. See 3.2.1.
+*   **Service Worker (`src/background.ts`):** Proxies every backend call (content scripts on https pages can't reliably fetch `http://localhost`). Callers use `callServer()` from `src/api.ts`, which sends a typed `ServerRequest` message (`evaluate`, `chat` or `purchase`) and resolves with the server's JSON. No auth session yet.
 
 ### 3.2 Frontend (React UI)
-*   **State:** Use a single `Zustand` store for charts, chat history, and verdict state. It holds a mock snapshot (`monthlyIncome`, `fixedBills`, `totalBudget` = discretionary budget, `spent`, `daysUntilPayday`, `ledger`); savings is derived (`selectSavings` = income − fixed bills − discretionary). The server's result lives in `evaluation` (set by `applyEvaluation`), which also replaces `totalBudget`, `spent` and `ledger` with the server's snapshot so the donut and Recent Ledger match the score. The mock values only show until the server answers. **Known gap:** `monthlyIncome` and `fixedBills` (Income & Allocation card) are still mock.
+*   **State:** Use a single `Zustand` store for charts, chat history, and verdict state. It holds a mock snapshot (`monthlyIncome`, `fixedBills`, `totalBudget` = discretionary budget, `spent`, `daysUntilPayday`, `ledger`); savings is derived (`selectSavings` = income − fixed bills − discretionary). The server's result lives in `evaluation` (set by `applyEvaluation`), which also replaces `totalBudget`, `spent` and `ledger` with the server's snapshot so the donut and Recent Ledger match the score. The mock values only show until the server answers. `monthlyIncome`, `fixedBills`, `savings` and `intensity` come from the popup's saved settings (`applySettings`). **Known gap:** the popup's Discretionary amount and the server's `settings.budget` are two separate budgets. The popup fills `totalBudget` first, then `applyEvaluation` overwrites it with the server's budget, so the score ignores what the user typed. Fix: have the popup `PUT /settings` on save (discretionary → `budget`).
 *   **Theme:** Dark overlay (see 7. Code Style → Styling for the exact palette).
 *   **Animations:** Use `Framer Motion` for a smooth slide-in/fade-in of the overlay.
 *   **Layout:** Two-panel split view sliding in from the right (stacks vertically below the `md` breakpoint).
@@ -44,6 +46,23 @@
         *   User input: enabled once `evaluation` is set, disabled while the agent is replying, and capped at `MAX_USER_TURNS` = 3 replies (mirrors the server, which enforces it). Enter sends, Shift+Enter adds a newline. Sending goes through the store action `sendChat`.
         *   **"Buy anyway (simulated)"** (`SimulatedBuyButton`, store action `simulatePurchase`): logs the item as a fake purchase via `POST /purchase`, then updates the ledger and spent from the returned snapshot. The checkout click stays blocked, so no Amazon order is placed. One click per intercept.
         *   *Not yet built:* "Sleep on it 24h" and "Make a commitment" buttons; cooldown.
+
+### 3.2.1 Configuration Popup (`src/popup/`)
+*   Fixed 440×600 page (Chrome's popup maximum height is 600px), same dark tokens as the overlay. The header has an **Enabled/Disabled switch** (see below). Below it, a tab bar (**1 Account · 2 Finances · 3 Agent**) shows **one section at a time**, each tab with a completion check (green) or a needs-attention dot (amber). Tabs follow the WAI-ARIA pattern (`role="tab"`, arrow-key navigation). The save bar stays pinned to the bottom.
+*   **No scrolling:** each section must fit the panel area (≈384px between the tabs and the save bar). Check `main.scrollHeight <= clientHeight` when changing a section's content.
+*   **Navigation:** the popup opens on the first incomplete section. Linking a bank during first-time setup moves on to Finances. When saving is blocked by a field on another tab, the hint under the save button links to that tab.
+*   **Account Connection:** an amber "Connect Bank Account" button opens a simulated Capital One / Nessie OAuth modal (`src/api/bank.ts`, mock accounts). Once linked, it shows a green "Linked: <nickname> ending in ****1234" with a Disconnect link. **Never** add a credential or API-key field: the real flow goes through the backend, and the extension stores only `{ id, nickname, last4 }`.
+*   **Financial Baseline & Allocation (Finances tab):** a large monthly net income input, a live `AllocationBar` preview, and a currency input plus slider for Fixed Bills (gray), Savings (green) and Discretionary (blue).
+    *   **Rebalancing:** editing income, fixed bills or savings auto-fills discretionary with the remainder. A manual discretionary override rebalances **savings only**; fixed bills are real obligations and never move automatically.
+    *   **Validation:** math is done in whole cents. Over-allocation shows a hatched red tail on the bar and blocks saving.
+*   **Agent Intervention:** a three-card radiogroup: Light / The Gentle Nudge (yellow caution icon), Medium / The Negotiator (amber scales, default), Harsh / The Interrogator (red flame). Harsh's cooling-off rule comes from `HARSH_COOLDOWN` in `src/settings.ts` (5 minutes, over 10% of the budget). The intensity currently only changes the mock opening line; the real prompt and cooldown behavior arrive with the backend.
+*   **Save bar:** "Save & Activate Interceptor" stays disabled, with the reason shown underneath, until a bank is linked and the split equals 100% of a positive income. After activation the button reads "Save Changes" and is only enabled when something has changed.
+*   **Enabled/Disabled switch:** pauses the interceptor without uninstalling the extension or losing settings. It flips only the persisted `settings.active` (unsaved draft edits are untouched), and open checkout tabs pick up the change live.
+    *   **Disabling** requires confirming in a dialog ("Keep it on" is the focused default). This is deliberate friction: turning it off is the easy escape for an impulse buyer.
+    *   **Enabling** is immediate.
+    *   The switch is unavailable until a complete setup has been saved once (`selectCanEnable`).
+    *   We don't use `chrome.management.setEnabled`: it needs an extra permission, and a disabled extension can't re-enable itself from its own popup.
+*   **Persistence:** `src/settings.ts` holds the `Settings` type and `loadSettings`/`saveSettings`/`onSettingsChanged`, all on `chrome.storage.local`. The content script applies changes live. Unsaved popup edits are lost when the popup closes (Chrome closes popups on blur).
 
 ### 3.3 Backend (`server/`, FastAPI)
 *   **Layout:** routes in `app.py` stay thin (load state → call pure functions → save state).
@@ -120,17 +139,20 @@ CLAUDE.md
 extension/                 # Manifest V3 extension + React overlay (Vite + CRXJS)
   manifest.json            # Source manifest; CRXJS rewrites it into dist/
   vite.config.ts
-  tailwind.config.js       # Brand colors `spent`/`purchase`/`savings`; mirror src/theme.ts
+  tailwind.config.js       # Surfaces `base`/`panel`; brand colors `spent`/`purchase`/`savings` (mirror src/theme.ts)
   src/
-    content.tsx            # Interception, scraping, Shadow DOM mount (entry point)
+    content.tsx            # Interception, activation gate, scraping, Shadow DOM mount (entry point)
     background.ts          # Service worker: the only code that calls the backend
     api.ts                 # callServer() + request/response types for the service worker
+    settings.ts            # Settings type + chrome.storage helpers shared by popup and content script
+    api/bank.ts            # Simulated Nessie OAuth (mock accounts) — replace with backend calls
+    popup/                 # Toolbar popup: index.html, main.tsx, Popup.tsx, store.ts, components/
     App.tsx                # Overlay shell (dark theme), two-panel layout, slide-in animation
     store.ts               # The single Zustand store (mock snapshot, ledger, evaluation, chat, verdict)
     format.ts              # formatUsd / formatPercent / formatTimeAgo
     theme.ts               # CHART_COLORS: the only source of data-viz colors
     index.css              # Tailwind entry, injected into the shadow root via ?inline
-    components/            # BudgetDonut, IncomeAllocation, RecentLedger, ChatPanel, SimulatedBuyButton
+    components/            # BudgetDonut, IncomeAllocation, AllocationBar (shared w/ popup), RecentLedger, ChatPanel, SimulatedBuyButton
 server/                    # FastAPI backend (see 3.3)
   app.py score.py snapshot.py nessie.py llm.py store.py
   data/                    # seed_snapshot.json, nessie_ids.json (+ git-ignored state.json, commitments.json, purchases.json)
@@ -142,7 +164,7 @@ Run from `extension/`:
 *   `npm run dev`: dev build with HMR into `dist/`. The dev server **must keep running**; the dev `dist/` loads code from `localhost:5173`.
 *   `npm run build`: typecheck (`tsc -b`) plus a standalone production build into `dist/`.
 *   `npm run typecheck`: types only. Must pass before any change is considered done.
-*   Load in Chrome: `chrome://extensions` → Developer mode → **Load unpacked** → `extension/dist`. After a rebuild, click reload on the extension card and refresh the Amazon tab. After moving or renaming the project folder, remove the extension and load it again (Chrome tracks unpacked extensions by absolute path, and the extension ID changes).
+*   Load in Chrome: `chrome://extensions` → Developer mode → **Load unpacked** → `extension/dist`. After a rebuild, click reload on the extension card and refresh the Amazon tab. Then click the extension's toolbar icon and finish setup. **The interceptor does nothing until you click "Save & Activate".** After moving or renaming the project folder, remove the extension and load it again (Chrome tracks unpacked extensions by absolute path, and the extension ID changes).
 
 Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/python -m pip install -r requirements.txt`, then copy `.env.example` to `.env`):
 *   `.venv/Scripts/python -m uvicorn app:app --port 3001 --reload`: start the backend.
@@ -163,19 +185,29 @@ Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/
 
 ### React & State
 *   Function components only, one component per file in `src/components/` (small private helpers such as `VerdictBadge` may live alongside their parent).
-*   **One Zustand store** (`src/store.ts`). Components read with narrow selectors (`useInterceptorStore((s) => s.spent)`), never the whole store. Non-React code (the content script) uses `useInterceptorStore.getState()`.
-*   State changes go through named store actions (`openIntercept`, `applyEvaluation`, `pushMessage`, `sendChat`, `close`); components never call `setState` directly.
+*   **One Zustand store per surface**: `src/store.ts` for the overlay, `src/popup/store.ts` for the popup (separate JS contexts that share state only through `chrome.storage`). Components read with narrow selectors (`useInterceptorStore((s) => s.spent)`), never the whole store. Non-React code (the content script) uses `useInterceptorStore.getState()`.
+*   State changes go through named store actions (`openIntercept`, `applySettings`, `applyEvaluation`, `pushMessage`, `sendChat`, `simulatePurchase`, `setDiscretionary`, …); components never call `setState` directly.
 *   Backend calls go through `callServer()` in `src/api.ts`, never `fetch` from the content script or components.
+*   Zustand v5: a selector that returns a new object or array (e.g. `selectAllocation`) **must** be wrapped in `useShallow`, or the component re-renders forever.
 *   Money is a `number` in dollars; render it only through `formatUsd()` (and percentages through `formatPercent()`) from `src/format.ts`.
 
 ### Styling
-*   **Dark theme only.** Surfaces: `bg-zinc-950` (overlay), `bg-zinc-900` (cards/panels), `bg-zinc-800` (inputs, hovered rows, user bubbles); borders `border-zinc-700`/`zinc-800`. Text: `text-zinc-100` primary, `text-zinc-400` secondary/timestamps. Agent accents are amber (`amber-950/40` bubble, `amber-500` ring/icon); verdict badges use `<color>-500/10` fill + `<color>-300` text.
+*   **Dark theme only.** Surfaces: `bg-base` (#121212, overlay and popup background), `bg-panel` (#1e1e1e, cards/panels), `bg-zinc-800` (inputs, hovered rows, user bubbles); borders `border-zinc-700`/`zinc-800`. Text: `text-zinc-100` primary, `text-zinc-400` secondary/timestamps. Agent accents and primary buttons are amber (`amber-500` button with `text-zinc-950`, `amber-950/40` agent bubble); success is emerald; verdict badges use `<color>-500/10` fill + `<color>-300` text.
 *   Tailwind utility classes only: no CSS modules, no inline `style` except for data-driven values (e.g. a chart color swatch).
 *   Never write global selectors (`body`, `html`, `*`) in `index.css`; the shadow root's document root is `:host`.
 *   Every element is inside the shadow root, so `document.querySelector` cannot reach overlay elements. Use refs.
 
+### Forms (popup)
+*   Money inputs use `CurrencyInput`, which does **cash-register entry**:
+    *   It always displays formatted currency (`$0.00` by default), and digits shift in from the right (4-5-0-0-0-0 → $4,500.00).
+    *   Backspace drops the last digit, select-all followed by typing replaces the amount, and non-digits are ignored.
+    *   Pasted text is read as a dollar amount ("$1,234.5" → $1,234.50).
+    *   The caret is pinned to the end, except for select-all.
+    *   Don't reintroduce a raw-on-focus/formatted-on-blur input. The earlier version had a selection race where fast typing appended ("1800" + "2000" → $18,002,000).
+*   Range sliders are custom-drawn (`appearance-none` with a gradient fill and a `--thumb` color). Native `accent-color` gives gray accents a light track that clashes with the dark theme.
+
 ### Data Visualization
-*   Chart colors come only from `CHART_COLORS` in `src/theme.ts`: `#3987e5` spent/discretionary, `#d95926` this purchase, `#199e70` savings, zinc neutrals for remaining/fixed bills. They're validated for color-vision deficiency on the zinc-900 surface. **Only these three hues pass when all pairs are on screen together** (violet, magenta and yellow all failed against them), so any new category goes into a neutral or an existing hue. Re-run the validator for any change.
+*   Chart colors come only from `CHART_COLORS` / `ALLOCATION_COLORS` in `src/theme.ts`: `#3987e5` spent/discretionary, `#d95926` this purchase, `#199e70` savings, zinc neutrals for remaining/fixed bills. They're validated for color-vision deficiency on the `panel` surface (#1e1e1e). **Only these three hues pass when all pairs are on screen together** (violet, magenta and yellow all failed against them), so any new category goes into a neutral or an existing hue. Re-run the validator for any change.
 *   Recharts 3: `<Pie>` has no `activeIndex` prop and `activeShape` is deprecated. Keep hover state in React (`activeIndex` via `onMouseEnter`/`onMouseLeave`) and render sectors through the `shape` prop.
 *   Every chart has a legend or value list, so meaning is never carried by color alone. Text stays in neutral ink, never the series color.
 *   Keep chart entry animations ≤ 500 ms. The overlay must look complete within about 1 s of interception (Recharts' default of 1500 ms left the donut blank on first view).
@@ -185,7 +217,7 @@ Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/
 ## 8. Guardrails (Do / Don't)
 
 ### Safety: real money is at stake
-*   **Testing on live Amazon can place a real order.** If the content script fails to load or a selector misses, the click goes through. Before clicking "Place your order" on a live checkout, confirm in DevTools that `document.getElementById('devils-advocate-host')` exists and the button matches `CHECKOUT_SELECTORS`. Prefer the mocked-page test (below) for every change. Turn off 1-Click on the demo account.
+*   **Testing on live Amazon can place a real order.** If the content script fails to load or a selector misses, the click goes through. Before clicking "Place your order" on a live checkout, confirm that (1) the popup's switch shows **Enabled**, (2) `document.getElementById('devils-advocate-host')` exists in DevTools, and (3) the button matches `CHECKOUT_SELECTORS`. An inactive interceptor deliberately lets the order through. Prefer the mocked-page test (below) for every change. Turn off 1-Click on the demo account.
 *   Interception must **fail closed on recognized buttons**: call `preventDefault()` and `stopImmediatePropagation()` *before* any async work, scraping, or code that could throw. If the server is down, the overlay keeps the mock message and the lock still holds.
 *   Intercept with **capture-phase listeners on `window`** (`click` and `submit`) using `closest()` delegation, not listeners attached to the button. Amazon re-renders the checkout DOM (address/payment changes) and runs its own handlers on the button.
 *   Never intercept "Add to Cart" or any non-checkout action (Rule 3).
@@ -215,5 +247,7 @@ Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/
 ### Verification Before Calling Work Done
 1.  `npm run typecheck` passes and `npm run build` succeeds; `.venv/Scripts/python -m pytest` passes in `server/`.
 2.  Load the built extension in a browser and exercise the flow with the server running (`http://localhost:3001/health` returns `{"ok":true}`). A clean compile is **not** proof the extension works. Chrome/Chromium 137+ ignore `--load-extension`; for automated tests, launch Chromium with `--remote-debugging-port` and `--enable-unsafe-extension-debugging`, then call CDP `Extensions.loadUnpacked`. On macOS, copy `dist/` out of `~/Desktop` first, or Chromium can't read the path.
-3.  Route the checkout URL to a mock page with the checkout button and assert: overlay mounts, Amazon's own click/submit handlers did **not** fire, the page did not navigate, the verdict badge shows, and the first message switches to the server's score.
-4.  Screenshot the overlay at desktop (≈1400px) and narrow (≈700px) widths and actually look at them.
+3.  Route the checkout URL to a mock page with the checkout button and assert: overlay mounts, Amazon's own click/submit handlers did **not** fire, the page did not navigate, the verdict badge shows, and the first message switches to the server's score. Check both states: on a fresh profile (not activated) clicks **pass through**, and after activating via the popup they're intercepted using the saved settings.
+4.  For popup changes, open `chrome-extension://<id>/src/popup/index.html` at 440×600. Drive it with real keystrokes (`keyboard.press` per digit, not just `fill`), switch tabs, and assert: the save button's enabled state, that each section fits without scrolling, and the stored `chrome.storage.local` value.
+5.  Screenshot the overlay at desktop (≈1400px) and narrow (≈700px) widths, plus the popup, and actually look at them. Wait out CSS transitions (~400ms) first, or the screenshot shows half-applied states.
+

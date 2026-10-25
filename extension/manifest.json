@@ -3,6 +3,10 @@
   "name": "Devil's Advocate — Amazon Purchase Interceptor",
   "description": "Intercepts Amazon checkout and makes you defend the purchase against your budget.",
   "version": "0.1.0",
+  "action": {
+    "default_title": "Devil's Advocate",
+    "default_popup": "src/popup/index.html"
+  },
   "permissions": [
     "storage"
   ],

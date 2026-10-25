@@ -1,18 +1,19 @@
-import { formatPercent, formatUsd } from '../format'
-import { selectSavings, useInterceptorStore } from '../store'
-import { CHART_COLORS } from '../theme'
+import { formatUsd } from '../format'
+import { useInterceptorStore } from '../store'
+import { ALLOCATION_COLORS } from '../theme'
+import AllocationBar from './AllocationBar'
 
 export default function IncomeAllocation() {
   const income = useInterceptorStore((s) => s.monthlyIncome)
   const fixedBills = useInterceptorStore((s) => s.fixedBills)
+  const savings = useInterceptorStore((s) => s.savings)
   const discretionary = useInterceptorStore((s) => s.totalBudget)
-  const savings = useInterceptorStore(selectSavings)
 
   const segments = [
-    { key: 'bills', label: 'Fixed bills', value: fixedBills, color: CHART_COLORS.neutralStrong },
-    { key: 'savings', label: 'Savings', value: savings, color: CHART_COLORS.savings },
-    { key: 'discretionary', label: 'Discretionary', value: discretionary, color: CHART_COLORS.spent },
-  ].filter((s) => s.value > 0)
+    { key: 'bills', label: 'Fixed bills', value: fixedBills, color: ALLOCATION_COLORS.fixedBills },
+    { key: 'savings', label: 'Savings', value: savings, color: ALLOCATION_COLORS.savings },
+    { key: 'discretionary', label: 'Discretionary', value: discretionary, color: ALLOCATION_COLORS.discretionary },
+  ]
 
   return (
     <section className="flex flex-col gap-3" aria-label="Income and allocation">
@@ -24,18 +25,7 @@ export default function IncomeAllocation() {
         </p>
       </div>
 
-      {/* Widths are data-driven, so they're inline styles rather than generated Tailwind classes;
-          flex-shrink absorbs the 2px gaps so the segments never overflow. */}
-      <div className="flex h-2.5 w-full gap-0.5 overflow-hidden rounded-full bg-zinc-800">
-        {segments.map((s) => (
-          <div
-            key={s.key}
-            className="h-full min-w-0 first:rounded-l-full last:rounded-r-full"
-            style={{ width: `${(s.value / income) * 100}%`, backgroundColor: s.color }}
-            title={`${s.label}: ${formatUsd(s.value)} (${formatPercent(s.value, income)})`}
-          />
-        ))}
-      </div>
+      <AllocationBar segments={segments} total={income} />
 
       <ul className="grid grid-cols-3 gap-2 text-xs">
         {segments.map((s) => (
