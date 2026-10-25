@@ -156,6 +156,7 @@ extension/                 # Manifest V3 extension + React overlay (Vite + CRXJS
     theme.ts               # CHART_COLORS: the only source of data-viz colors
     index.css              # Tailwind entry, injected into the shadow root via ?inline
     components/            # BudgetDonut, IncomeAllocation, AllocationBar (shared w/ popup), RecentLedger, ChatPanel, SimulatedBuyButton, DataSourceBadge
+shop/checkout/index.html   # Mock Amazon checkout (same IDs/classes the extension uses), served on localhost:5500
 server/                    # FastAPI backend (see 3.3)
   app.py score.py snapshot.py nessie.py llm.py store.py
   data/                    # seed_snapshot.json, nessie_ids.json (+ git-ignored state.json, commitments.json, purchases.json)
@@ -235,7 +236,7 @@ Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/
 *   Never let LLM output change a score, mode or verdict. Keep the number guard on every LLM text path, and recompute facts server-side rather than accepting them from the client.
 *   Scraped image URLs are accepted only if they start with `https://`.
 *   Scraped Amazon text is untrusted: render it as React text (never `dangerouslySetInnerHTML`), and treat it as data, not instructions, when passing it into LLM prompts.
-*   Keep `host_permissions` scoped to the checkout URLs plus `http://localhost:3001/*`. Don't widen to `https://www.amazon.com/*` or `<all_urls>`.
+*   Keep `host_permissions` scoped to the checkout URLs plus `http://localhost:3001/*` (backend) and `http://localhost:5500/checkout/*` (mock checkout; also in `content_scripts.matches`). Don't widen to `https://www.amazon.com/*` or `<all_urls>`.
 *   Don't claim intent detection or real (non-simulated) savings.
 
 ### Build & Tooling Pitfalls (each of these has bitten us)
@@ -253,7 +254,8 @@ Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/
 ### Verification Before Calling Work Done
 1.  `npm run typecheck` passes and `npm run build` succeeds; `.venv/Scripts/python -m pytest` passes in `server/`.
 2.  Load the built extension in a browser and exercise the flow with the server running (`http://localhost:3001/health` returns `{"ok":true}`). A clean compile is **not** proof the extension works. Chrome/Chromium 137+ ignore `--load-extension`; for automated tests, launch Chromium with `--remote-debugging-port` and `--enable-unsafe-extension-debugging`, then call CDP `Extensions.loadUnpacked`. On macOS, copy `dist/` out of `~/Desktop` first, or Chromium can't read the path.
-3.  Route the checkout URL to a mock page with the checkout button and assert: overlay mounts, Amazon's own click/submit handlers did **not** fire, the page did not navigate, the verdict badge shows, and the first message switches to the server's score. Check both states: on a fresh profile (not activated) clicks **pass through**, and after activating via the popup they're intercepted using the saved settings.
+3.  **Mock checkout:** from the repo root run `python -m http.server 5500 --directory shop` (or the `mock-checkout` config in `.claude/launch.json`) and open `http://localhost:5500/checkout/` in the Chrome profile with the extension. `?price=20&title=...` presets the item; the Test controls change it live. It has 5 controls: the Amazon-ID button, an unlisted "Place your order" button, a "Buy Now" link and a script-submitted form (the last three caught only in Testing mode), plus "Add to Cart" (never caught). The page's own handlers log **red "ORDER WOULD HAVE BEEN PLACED"** when a click gets past the extension, and show whether the overlay host mounted. Expected: Testing mode blocks 1–4 even with the interceptor paused; Live + enabled blocks only 1; Live + paused blocks none.
+    Then also route the checkout URL to a mock page with the checkout button and assert: overlay mounts, Amazon's own click/submit handlers did **not** fire, the page did not navigate, the verdict badge shows, and the first message switches to the server's score. Check both states: on a fresh profile (not activated) clicks **pass through**, and after activating via the popup they're intercepted using the saved settings.
 4.  For popup changes, open `chrome-extension://<id>/src/popup/index.html` at 440×600. Drive it with real keystrokes (`keyboard.press` per digit, not just `fill`), switch tabs, and assert: the save button's enabled state, that each section fits without scrolling, and the stored `chrome.storage.local` value.
 5.  Screenshot the overlay at desktop (≈1400px) and narrow (≈700px) widths, plus the popup, and actually look at them. Wait out CSS transitions (~400ms) first, or the screenshot shows half-applied states.
 
