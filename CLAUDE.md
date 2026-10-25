@@ -47,6 +47,7 @@
         *   Chat window. The first agent message is Claude's explanation (money only, no score; Rule 5). Replies arrive whole (not streamed). Agent bubbles are amber-tinted; user bubbles are zinc.
         *   User input: enabled once `evaluation` is set, disabled while the agent is replying, and closed (`chatClosed`, placeholder "Time to decide.") when `/chat` returns `done: true`. **The reply cap is hidden:** the extension doesn't know or show it, so there's no countdown to bargain against. Enter sends, Shift+Enter adds a newline. Sending goes through the store action `sendChat`.
         *   **"Buy anyway (simulated)"** (`SimulatedBuyButton`, store action `simulatePurchase`): logs the item as a fake purchase via `POST /purchase`, then updates the ledger and spent from the returned snapshot. The checkout click stays blocked, so no Amazon order is placed. One click per intercept.
+        *   **Decision logging:** closing the overlay after the server answered, without buying, logs `walked_away`; a simulated buy logs `bought` (store action `logDecision`, fire-and-forget `POST /decision`).
         *   *Not yet built:* "Sleep on it 24h" and "Make a commitment" buttons; cooldown.
 
 ### 3.2.1 Configuration Popup (`src/popup/`)
@@ -54,6 +55,7 @@
 *   **No scrolling:** each section must fit the panel area (≈384px between the tabs and the save bar). Check `main.scrollHeight <= clientHeight` when changing a section's content.
 *   **Navigation:** the popup opens on the first incomplete section. Linking a bank during first-time setup moves on to Finances. When saving is blocked by a field on another tab, the hint under the save button links to that tab.
 *   **Account Connection:** an amber "Connect Bank Account" button opens a Capital One / Nessie sign-in modal (`src/api/bank.ts`). The account list is the demo customer's real Nessie checking accounts (`GET /accounts`); only the sign-in step is simulated (Nessie has no OAuth). Linking prefills an empty Finances tab with what the bank holds (`GET /profile?account_id=`). Once linked, it shows a green "Linked: <nickname> ending in ****1234" with a Disconnect link. **Never** add a credential or API-key field: the real flow goes through the backend, and the extension stores only `{ id, nickname, last4 }`.
+*   **Customer dropdown** (`CustomerPicker`, top of the Account tab; dev/demo control): lists the Nessie customers the key can see (`GET /customers`) and switches the server to one (`PUT /customer`). **Config is per customer:** finances live in Nessie on that customer's account, and the linked account and intensity are kept per customer on the server, so switching loads theirs into the popup (`switchCustomer`). Save sends the intensity with the finances.
 *   **Financial Baseline & Allocation (Finances tab):** a large monthly net income input, a live `AllocationBar` preview, and a currency input plus slider for Fixed Bills (gray), Savings (green) and Discretionary (blue).
     *   **Rebalancing:** editing income, fixed bills or savings auto-fills discretionary with the remainder. A manual discretionary override rebalances **savings only**; fixed bills are real obligations and never move automatically.
     *   **Validation:** math is done in whole cents. Over-allocation shows a hatched red tail on the bar and blocks saving.
@@ -77,15 +79,20 @@
         *   `spent_this_month` = purchases dated this month. `balance` = Nessie balance − simulated purchases (Nessie never deducts purchases; seeded spending is already reflected in the starting balance).
         *   `record_simulated_purchase(title, price)` creates a purchase on the linked account at the Amazon.com merchant.
     *   `demo_data.py`: `seed_customer(seed, last_name)` and `reset_demo()`, shared by the scripts and the tests.
+    *   `customers.py`: `list_customers()` and `select_customer(id)`, which rewrites `nessie_ids.json` (customer, checking, savings; the demo merchant carries over). Refuses a customer with no checking account.
+    *   `decisions.py`: the per-customer decision log. `record(title, price, outcome, history)` stores `{ title, price, outcome: bought|walked_away, summary, timestamp }` (last 50), with `summary` from `llm.summarize_decision` (1-2 lines: what they did and their own stated reason; template fallback). `relevant(title)` returns up to 3 summaries for a similar item (word overlap ≥ 50% of the shorter title, `similar()`), newest first.
     *   `nessie.py`: thin client on one pooled `httpx.Client`. Errors are re-raised as `NessieError` without the URL, because the URL carries the API key; routes turn them into a 502. A trailing slash in `NESSIE_BASE` is stripped.
     *   `llm.py`: `explain(facts)` and `chat(facts, title, history, final)`. Both pass only `public_facts` (price, balance_after, monthly_bills, budget_left_after, action) to Claude, through `_grounded_or`, which falls back to `template_message` when there's no key, the API errors, Claude refuses, `numbers_are_grounded` fails, or `mentions_internals` matches. The persona and per-verdict instructions live in `SYSTEM` / `CHAT_SYSTEM`.
-    *   `store.py`: reads/writes `data/state.json` (settings, `regret_penalty`, `blocks_this_week`, linked `account_id`, `ignored_nessie_purchases`) and `data/commitments.json`, via temp file + rename. Both files are git-ignored, recreated from defaults, and merged over the defaults on load. No money lives here.
+    *   `store.py`: reads/writes `data/state.json` (global: settings, `regret_penalty`, `blocks_this_week`, `ignored_nessie_purchases`; per customer under `customers[<customer_id>]`: linked `account_id`, `intensity`, `decisions`) and `data/commitments.json`, via temp file + rename. Both files are git-ignored. `reset_demo` restores defaults, which also clears every customer's decision log and links.
 *   **Endpoints:**
     *   `GET /health` → `{ ok: true, source }`, where `source` is `{ type: "nessie", customer_id, account_id, customer_name }` for the linked account (local files only, no Nessie call). The same `source` is in every snapshot, and the overlay shows it at the bottom of the left panel (`DataSourceBadge`).
     *   `POST /evaluate` `{ title, price, quantity?, category? }` → `{ action, message, snapshot }`, where `snapshot` is `{ monthly_income, monthly_bills, savings, budget, spent_this_month, balance, transactions, source }` for the UI. The score never leaves the server (Rule 5); `?debug=true` adds `debug` with the full facts (`score_before`, `score_after`, `components_after`, `monthly_bills`, `budget_left_after`, `floor`, …) for development and tests. The extension never asks for it.
     *   `POST /purchase` `{ title, price }` → `{ snapshot }`. **SIMULATED** "Buy anyway": records a fake purchase in Nessie so the ledger and the next score reflect it. Nothing is ordered anywhere.
     *   `POST /chat` `{ purchase, history: [{ role: user|assistant, content }] }` → `{ reply, done }`. History must end with a user turn. On the user's `MAX_USER_TURNS`th (3rd) reply, Claude gets `llm.FINAL_TURN`: sum up, hand them the decision (buy anyway or walk away), no question, never mention a limit; the response has `done: true`. More than 3 user turns returns `llm.closing_message` with `done: true` without calling Claude. Facts are recomputed server-side, never taken from the client.
     *   `GET /accounts` → `[{ id, nickname, last4 }]`: the demo customer's checking accounts (no balances).
+    *   `GET /customers` → `{ current, customers: [{ id, name }] }`; `PUT /customer` `{ customer_id }` → `{ customer, profile }` (409 if they have no checking account).
+    *   `POST /decision` `{ purchase, history, outcome: bought|walked_away }` → the stored log entry; `GET /decisions` → this customer's log (dev). `/evaluate` and `/chat` add `past_decisions` (summaries for a similar item) to the facts Claude sees; they change wording only, never the verdict.
+    *   `GET|PUT /profile` also carry `intensity` (saved per customer).
     *   `GET /profile[?account_id=]` → `{ account, monthly_income, fixed_bills, savings, discretionary }` as Nessie holds it, for the linked account or a preview of `account_id`. 404 if it isn't one of the customer's checking accounts.
     *   `PUT /profile` `{ account_id, monthly_income, fixed_bills, savings, discretionary }` → same shape, read back from Nessie after writing. Validated: income > 0, parts ≥ 0, and fixed + savings + discretionary = income in whole cents (422 otherwise). 409 if the account's other bills already exceed `fixed_bills`. Also links the account (`state.account_id`).
     *   `GET|PUT /settings` `{ buffer_target, mode: aware|strict, floor }`. The budget is not a setting; it comes from the profile.
@@ -134,6 +141,8 @@
 
 **Step 5: Follow-up loop (planned).** Commitments with a follow-up date; answers "used / returned / unused" adjust `regret_penalty` (+5 per returned/unused, max 15; −3 per used, min 0). "Saved" money counts only if a blocked/abandoned purchase isn't bought within 7 days; in the demo that time-skip is SIMULATED and labeled.
 
+**Step 6: Decision memory.** Every finished checkout is logged per customer: the overlay sends `bought` when "Buy it/anyway (simulated)" succeeds and `walked_away` when it's closed without buying (`logDecision`, once per checkout). Claude summarizes the chat into 1-2 lines with the outcome and the student's reason. On a later checkout of a similar item, those lines go to Claude as `past_decisions`, so it can say e.g. "last time you walked away from these until after rent". Same guards as all LLM text (numbers, internals).
+
 ---
 
 ## 5. Status & Next Steps
@@ -167,10 +176,10 @@ extension/                 # Manifest V3 extension + React overlay (Vite + CRXJS
     index.css              # Tailwind entry, injected into the shadow root via ?inline
     components/            # BudgetDonut, IncomeAllocation, AllocationBar (shared w/ popup), RecentLedger, FinancesPlaceholder, CartItems, ChatPanel, SimulatedBuyButton, TestModeBanner, DataSourceBadge
 server/                    # FastAPI backend (see 3.3)
-  app.py score.py finances.py snapshot.py demo_data.py nessie.py llm.py store.py
+  app.py score.py finances.py snapshot.py customers.py decisions.py demo_data.py nessie.py llm.py store.py
   data/                    # seed_data.json, nessie_ids.json (+ git-ignored state.json, commitments.json)
   scripts/                 # seed_nessie.py, reset_demo.py, nessie_customer.py, show_nessie.py
-  tests/                   # fake_nessie.py (in-memory Nessie), test_score.py, test_finances.py, test_purchases.py, test_chat.py, test_nessie_live.py
+  tests/                   # fake_nessie.py (in-memory Nessie), test_score.py, test_finances.py, test_purchases.py, test_chat.py, test_customers_and_memory.py, test_nessie_live.py
   .env.example             # copy to server/.env (git-ignored)
 ```
 Run from `extension/`:

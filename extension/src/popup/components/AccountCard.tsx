@@ -1,5 +1,6 @@
 import { ArrowDownLeft, CheckCircle2, Landmark, Lock, Receipt, ShoppingBag, type LucideIcon } from 'lucide-react'
 import { usePopupStore } from '../store'
+import CustomerPicker from './CustomerPicker'
 
 interface Props {
   onConnect: () => void
@@ -21,6 +22,8 @@ export default function AccountCard({ onConnect }: Props) {
         <h2 id="account-title" className="text-sm font-semibold text-zinc-100">Account Connection</h2>
         <p className="text-xs text-zinc-400">The agent reads your real spending through Capital One.</p>
       </div>
+
+      <CustomerPicker />
 
       {account ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2.5">

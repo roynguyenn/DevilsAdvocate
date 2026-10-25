@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { callServer } from './api'
+import { callServer, type DecisionOutcome } from './api'
 import { formatUsd } from './format'
 import type { Intensity, Settings } from './settings'
 
@@ -116,6 +116,8 @@ interface InterceptorState {
   isAgentTyping: boolean
   // Set when the server wraps the chat up. The reply cap lives only on the server and is never shown.
   chatClosed: boolean
+  // One decision-log entry per checkout: bought (simulated) or walked away (closed without buying).
+  decisionLogged: boolean
   purchaseState: 'idle' | 'saving' | 'done'
   // Mirrors the popup's Testing switch (settings.ts) so the overlay can say no order will be placed.
   testMode: boolean
@@ -128,6 +130,7 @@ interface InterceptorState {
   pushMessage: (role: ChatMessage['role'], content: string) => void
   sendChat: (text: string) => Promise<void>
   simulatePurchase: () => Promise<void>
+  logDecision: (outcome: DecisionOutcome) => void
   close: () => void
 }
 
@@ -160,6 +163,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   evaluation: null,
   isAgentTyping: false,
   chatClosed: false,
+  decisionLogged: false,
   purchaseState: 'idle',
   testMode: true,
 
@@ -178,6 +182,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
       financesError: cart.total === null ? 'No price to score.' : null,
       isAgentTyping: false,
       chatClosed: false,
+      decisionLogged: false,
       purchaseState: 'idle',
       chatHistory: [
         {
@@ -229,6 +234,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
         purchase: { title: cartTitle(cart), price: cartTotal },
       })
       set({ finances: fromSnapshot(res.snapshot), dataSource: res.snapshot.source, purchaseState: 'done' })
+      get().logDecision('bought')
       pushMessage(
         'agent',
         `Logged ${formatUsd(cartTotal)} as a simulated purchase. No order was placed. ` +
@@ -268,5 +274,23 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
     }
   },
 
-  close: () => set({ isOpen: false, verdictStatus: 'idle' }),
+  // Fire-and-forget: the server summarizes the chat (Claude) into a 1-2 line memory for next time.
+  logDecision: (outcome) => {
+    const { evaluation, decisionLogged, cart, cartTotal, chatHistory } = get()
+    if (!evaluation || decisionLogged || cartTotal === null) return
+    set({ decisionLogged: true })
+    const history = chatHistory.slice(-20).map((m) => ({
+      role: m.role === 'agent' ? ('assistant' as const) : ('user' as const),
+      content: m.content,
+    }))
+    callServer({ type: 'decision', purchase: { title: cartTitle(cart), price: cartTotal }, history, outcome }).catch(
+      (err: Error) => console.warn('[devils-advocate] decision not logged:', err.message),
+    )
+  },
+
+  // Closing after the server answered, without buying, counts as walking away.
+  close: () => {
+    get().logDecision('walked_away')
+    set({ isOpen: false, verdictStatus: 'idle' })
+  },
 }))

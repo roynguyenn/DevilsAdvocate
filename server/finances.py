@@ -27,9 +27,14 @@ def nessie_ids() -> dict:
     return json.loads(NESSIE_IDS.read_text())
 
 
+def current_customer_id() -> str:
+    return nessie_ids()["customer_id"]
+
+
 def linked_account_id() -> str:
-    """The checking account the popup linked, or the seeded one before anything was linked."""
-    return store.load_state().get("account_id") or nessie_ids()["account_id"]
+    """The checking account the popup linked for the current customer, or their seeded one."""
+    ids = nessie_ids()
+    return store.load_customer(ids["customer_id"])["account_id"] or ids["account_id"]
 
 
 def _last4(account: dict) -> str:

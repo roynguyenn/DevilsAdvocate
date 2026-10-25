@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field, model_validator
 
 load_dotenv()  # before importing modules that read env vars
 
+import customers  # noqa: E402
+import decisions  # noqa: E402
 import finances  # noqa: E402
 import llm  # noqa: E402
 import nessie  # noqa: E402
@@ -59,6 +61,8 @@ class Profile(BaseModel):
     fixed_bills: float = Field(ge=0, le=1_000_000)
     savings: float = Field(ge=0, le=1_000_000)
     discretionary: float = Field(ge=0, le=1_000_000)
+    # The Agent tab. Not a bank field, so it's kept per customer in state.json.
+    intensity: Literal["light", "medium", "harsh"] | None = None
 
     @model_validator(mode="after")
     def split_is_whole_income(self):
@@ -90,6 +94,17 @@ class ChatRequest(BaseModel):
     history: list[ChatTurn]
 
 
+class Decision(BaseModel):
+    """How a checkout ended: the overlay sends this when they buy (simulated) or close without buying."""
+
+    purchase: Purchase
+    history: list[ChatTurn] = Field(max_length=20)
+    outcome: Literal["bought", "walked_away"]
+
+
+class CustomerChoice(BaseModel):
+    customer_id: str = Field(min_length=1, max_length=100)
+
 
 MAX_USER_TURNS = 3
 
@@ -108,12 +123,17 @@ def _snapshot_for_ui(snap: dict) -> dict:
     return {k: snap[k] for k in UI_SNAPSHOT_KEYS}
 
 
+def _with_memory(facts: dict, title: str) -> dict:
+    past = decisions.relevant(title)
+    return {**facts, "past_decisions": past} if past else facts
+
+
 @app.post("/evaluate")
 def evaluate(purchase: Purchase, debug: bool = False):
     """The score and threshold stay server-side: the extension only gets the verdict and the wording.
     `?debug=true` adds the full facts (scores, components, floor) for development."""
     snap = get_financial_snapshot()
-    facts = score.evaluate(snap, purchase.model_dump(), store.load_state())
+    facts = _with_memory(score.evaluate(snap, purchase.model_dump(), store.load_state()), purchase.title)
     body = {"action": facts["action"], "message": llm.explain(facts), "snapshot": _snapshot_for_ui(snap)}
     return {**body, "debug": facts} if debug else body
 
@@ -130,7 +150,8 @@ def chat(req: ChatRequest):
     if not req.history or req.history[-1].role != "user":
         raise HTTPException(400, "history must end with a user message")
     # Recompute facts server-side so the client can't hand Claude made-up numbers.
-    facts = score.evaluate(get_financial_snapshot(), req.purchase.model_dump(), store.load_state())
+    facts = _with_memory(score.evaluate(get_financial_snapshot(), req.purchase.model_dump(), store.load_state()),
+                         req.purchase.title)
     user_turns = sum(t.role == "user" for t in req.history)
     # The cap is never shown to the user: their last allowed reply gets a wrap-up that hands them the decision,
     # and `done` tells the overlay to close the chat. Anything past the cap gets the wrap-up without calling Claude.
@@ -149,7 +170,8 @@ def _checking_account(account_id: str) -> dict:
 
 
 def _profile_response(account: dict) -> dict:
-    return {"account": finances.account_summary(account), **finances.get_profile(account["_id"])}
+    intensity = store.load_customer(finances.current_customer_id())["intensity"]
+    return {"account": finances.account_summary(account), **finances.get_profile(account["_id"]), "intensity": intensity}
 
 
 @app.get("/accounts")
@@ -172,10 +194,41 @@ def put_profile(profile: Profile):
         finances.save_profile(account["_id"], profile.monthly_income, profile.fixed_bills, profile.savings)
     except ValueError as e:
         raise HTTPException(409, str(e)) from None
-    state = store.load_state()
-    state["account_id"] = account["_id"]
-    store.save_state(state)
+    customer_id = finances.current_customer_id()
+    data = store.load_customer(customer_id)
+    data["account_id"] = account["_id"]
+    if profile.intensity:
+        data["intensity"] = profile.intensity
+    store.save_customer(customer_id, data)
     return _profile_response(account)
+
+
+@app.get("/customers")
+def get_customers():
+    """Dev/demo control: the Nessie customers the key can see, and which one the server reads."""
+    return customers.list_customers()
+
+
+@app.put("/customer")
+def put_customer(choice: CustomerChoice):
+    """Switch the server to another Nessie customer. Their linked account, finances and intensity come with them."""
+    try:
+        chosen = customers.select_customer(choice.customer_id)
+    except LookupError as e:
+        raise HTTPException(409, str(e)) from None
+    return {"customer": chosen, "profile": _profile_response(_checking_account(finances.linked_account_id()))}
+
+
+@app.post("/decision")
+def post_decision(d: Decision):
+    """Log how a checkout ended (bought or walked away) as a 1-2 line summary for next time."""
+    return decisions.record(d.purchase.title, d.purchase.price, d.outcome, [t.model_dump() for t in d.history])
+
+
+@app.get("/decisions")
+def get_decisions():
+    """This customer's decision log, oldest first (for development)."""
+    return decisions.history()
 
 
 @app.get("/settings")

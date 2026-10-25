@@ -84,7 +84,7 @@ def test_put_profile_returns_what_nessie_now_holds(bank):
     account = bank.accounts[bank.ids["account_id"]]
     assert saved["account"] == {"id": account["_id"], "nickname": "Main", "last4": account["account_number"][-4:]}
     assert client.get("/profile").json() == saved
-    assert store.load_state()["account_id"] == bank.ids["account_id"]
+    assert store.load_customer(bank.ids["customer_id"])["account_id"] == bank.ids["account_id"]  # linked per customer
 
 
 @pytest.mark.parametrize("change", [

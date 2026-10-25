@@ -20,6 +20,7 @@ from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv(ROOT / ".env")
 
+import customers  # noqa: E402
 import nessie  # noqa: E402
 import store  # noqa: E402
 
@@ -61,28 +62,12 @@ def show(customer_id: str) -> None:
 
 
 def use(customer_id: str) -> None:
-    customer = nessie._get(f"/customers/{customer_id}")
-    accounts = nessie.get_accounts(customer_id)
-    checking = next((a for a in accounts if a.get("type") == "Checking"), accounts[0] if accounts else None)
-    if not checking:
-        sys.exit("That customer has no accounts. Run scripts/seed_nessie.py to make a complete one.")
-    savings = next((a for a in accounts if a.get("type") == "Savings"), None)
-    ids = {
-        "customer_id": customer_id,
-        "account_id": checking["_id"],
-        # Merchants aren't tied to a customer, so the demo merchant carries over.
-        "merchant_id": current().get("merchant_id"),
-        "last_name": customer.get("last_name", ""),
-    }
-    if savings:
-        ids["savings_account_id"] = savings["_id"]
-    IDS_FILE.write_text(json.dumps(ids, indent=2) + "\n")
-    # The server prefers the account the popup linked (state.json) over nessie_ids.json, so forget it.
-    state = store.load_state()
-    if state.pop("account_id", None):
-        store.save_state(state)
-    print(f"Now using {customer.get('first_name', '')} {ids['last_name']}: account {checking.get('nickname')} "
-          f"({checking['_id']}), balance {checking.get('balance')}")
+    # Same switch as the popup's customer dropdown (PUT /customer).
+    try:
+        chosen = customers.select_customer(customer_id)
+    except LookupError as e:
+        sys.exit(str(e))
+    print(f"Now using {chosen['name']} ({customer_id}). Their linked account and settings come with them.")
 
 
 if __name__ == "__main__":

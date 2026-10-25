@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { callServer, type ServerProfile } from '../api'
+import { callServer, type CustomerOption, type ServerProfile } from '../api'
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type Intensity, type LinkedAccount, type Settings } from '../settings'
 
 // The popup is its own page (separate JS context from the content script), so it gets its own store.
@@ -18,6 +18,7 @@ interface PopupState {
   saving: boolean
   justSaved: boolean
   saveError: string | null
+  switchingCustomer: boolean
 
   hydrate: () => Promise<void>
   setSection: (section: Section) => void
@@ -30,6 +31,7 @@ interface PopupState {
   setIntensity: (intensity: Intensity) => void
   save: () => Promise<void>
   setActive: (active: boolean) => Promise<void>
+  switchCustomer: (customerId: string) => Promise<void>
 }
 
 // Allocation math runs in whole cents so float drift can't make a balanced split read as unbalanced.
@@ -44,16 +46,19 @@ function autoDiscretionary(d: Draft): Draft {
 const toDraft = ({ active: _active, ...draft }: Settings): Draft => draft
 const EMPTY_DRAFT = toDraft(DEFAULT_SETTINGS)
 
-// The finance fields as Nessie holds them. Discretionary is derived server-side, so it always balances.
+// The config as the server holds it for the current customer: finances from Nessie (discretionary is derived
+// server-side, so it always balances) plus the intensity, which is kept per customer.
 const fromProfile = (p: ServerProfile) => ({
   account: p.account,
   monthlyIncome: p.monthly_income,
   fixedBills: p.fixed_bills,
   savings: p.savings,
   discretionary: p.discretionary,
+  intensity: p.intensity,
 })
 
-const fetchProfile = (accountId: string) => callServer<ServerProfile>({ type: 'getProfile', accountId })
+// No accountId = the current customer's linked account.
+const fetchProfile = (accountId?: string) => callServer<ServerProfile>({ type: 'getProfile', accountId })
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
@@ -113,6 +118,7 @@ export const usePopupStore = create<PopupState>((set, get) => {
     saving: false,
     justSaved: false,
     saveError: null,
+    switchingCustomer: false,
 
     hydrate: async () => {
       const stored = await loadSettings()
@@ -120,11 +126,12 @@ export const usePopupStore = create<PopupState>((set, get) => {
       // Open on the first section that still needs attention.
       set({ section: selectSaveBlocker(get())?.section ?? 'account' })
 
-      // The bank is the source of truth: show what Nessie holds now (e.g. after a demo reset), not what this
-      // browser saved last time. If the server is down, the last saved values stay.
+      // The server is the source of truth: show what it holds for the current customer now (e.g. after a demo
+      // reset or a customer switch), not what this browser saved last time. If the server is down, the last
+      // saved values stay.
       if (!stored.account) return
       try {
-        const saved: Settings = { ...get().saved, ...fromProfile(await fetchProfile(stored.account.id)) }
+        const saved: Settings = { ...get().saved, ...fromProfile(await fetchProfile()) }
         set((s) => ({ saved, draft: selectIsDirty(s) ? s.draft : toDraft(saved) }))
         if (JSON.stringify(saved) !== JSON.stringify(stored)) await saveSettings(saved)
       } catch {
@@ -175,6 +182,7 @@ export const usePopupStore = create<PopupState>((set, get) => {
             fixed_bills: draft.fixedBills,
             savings: draft.savings,
             discretionary: draft.discretionary,
+            intensity: draft.intensity,
           },
         })
         // Store what the bank now holds, so this browser and Nessie can't disagree.
@@ -196,6 +204,24 @@ export const usePopupStore = create<PopupState>((set, get) => {
       await saveSettings(settings)
       // Clear any lingering "Interceptor active" flash so the save bar can't contradict the switch.
       set({ saved: settings, justSaved: false })
+    },
+
+    // Dev/demo control: point the server at another Nessie customer and load their saved config.
+    switchCustomer: async (customerId) => {
+      set({ switchingCustomer: true, saveError: null })
+      try {
+        const res = await callServer<{ customer: CustomerOption; profile: ServerProfile }>({
+          type: 'selectCustomer',
+          customerId,
+        })
+        const saved: Settings = { ...get().saved, ...fromProfile(res.profile) }
+        await saveSettings(saved)
+        set({ saved, draft: toDraft(saved), justSaved: false })
+      } catch (err) {
+        set({ saveError: `Couldn't switch customer: ${errorText(err)}` })
+      } finally {
+        set({ switchingCustomer: false })
+      }
     },
   }
 })

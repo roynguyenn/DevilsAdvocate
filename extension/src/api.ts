@@ -1,4 +1,4 @@
-import type { LinkedAccount } from './settings'
+import type { Intensity, LinkedAccount } from './settings'
 
 export interface Purchase {
   title: string
@@ -18,6 +18,8 @@ export interface ProfileInput {
   fixed_bills: number
   savings: number
   discretionary: number
+  // Saved per customer on the server (not a bank field).
+  intensity?: Intensity
 }
 
 // What Nessie holds after a read or write (GET|PUT /profile).
@@ -27,15 +29,33 @@ export interface ServerProfile {
   fixed_bills: number
   savings: number
   discretionary: number
+  intensity: Intensity
 }
+
+// A Nessie customer the dev dropdown can switch to (GET /customers).
+export interface CustomerOption {
+  id: string
+  name: string
+}
+
+export interface CustomerList {
+  current: string
+  customers: CustomerOption[]
+}
+
+export type DecisionOutcome = 'bought' | 'walked_away'
 
 export type ServerRequest =
   | { type: 'evaluate'; purchase: Purchase }
   | { type: 'chat'; purchase: Purchase; history: ChatTurn[] }
   | { type: 'purchase'; purchase: Purchase }
   | { type: 'accounts' }
-  | { type: 'getProfile'; accountId: string }
+  // No accountId = the current customer's linked account.
+  | { type: 'getProfile'; accountId?: string }
   | { type: 'saveProfile'; profile: ProfileInput }
+  | { type: 'customers' }
+  | { type: 'selectCustomer'; customerId: string }
+  | { type: 'decision'; purchase: Purchase; history: ChatTurn[]; outcome: DecisionOutcome }
 
 type ServerResponse<T> = { ok: true; data: T } | { ok: false; error: string }
 
