@@ -21,7 +21,8 @@ const LEVELS: Level[] = [
     iconClass: 'text-yellow-400',
     selectedClass: 'border-yellow-400/70 bg-yellow-400/10',
     description:
-      'A quick budget reminder and a simple "Are you sure?" before the purchase goes through. Low friction.',
+      'A quick budget reminder and a simple "Are you sure?" before the purchase goes through. Only speaks up on ' +
+      'bigger hits to your budget. Low friction.',
   },
   {
     id: 'medium',
@@ -31,7 +32,8 @@ const LEVELS: Level[] = [
     iconClass: 'text-amber-400',
     selectedClass: 'border-amber-500/70 bg-amber-500/10',
     description:
-      'Weighs the purchase against your daily budget, suggests alternatives, and requires a brief rationalization before unlocking checkout.',
+      'Weighs the purchase against your daily budget, suggests alternatives, and asks you to make your case. ' +
+      'Questions anything that takes a real bite out of your budget.',
   },
   {
     id: 'harsh',
@@ -42,6 +44,7 @@ const LEVELS: Level[] = [
     selectedClass: 'border-red-500/70 bg-red-500/10',
     description:
       `Maximum friction. Aggressively challenges impulse buys, calls out missed savings goals, and demands a robust defense. ` +
+      `Puts orders that leave you stretched on hold until you decide. ` +
       `Discretionary purchases over ${HARSH_COOLDOWN.budgetPercent}% of your budget trigger a mandatory ` +
       `${HARSH_COOLDOWN.minutes}-minute cooling-off timer.`,
   },

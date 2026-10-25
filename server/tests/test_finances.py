@@ -160,5 +160,26 @@ def test_linking_another_checking_account_moves_the_score_to_it(bank):
 def test_settings_no_longer_carry_a_budget(bank):
     r = client.put("/settings", json={"buffer_target": 300, "mode": "strict", "floor": 70})
     assert r.json() == {"buffer_target": 300, "mode": "strict", "floor": 70}
+    # Strictness now comes from the Agent setting, not /settings: Medium (the default) never blocks...
+    e = client.post("/evaluate?debug=true", json={"title": "Headphones", "price": 180}).json()["debug"]
+    assert (e["score_after"], e["action"], e["mode"]) == (62, "nudge", "aware")
+    # ...and Harsh puts the same purchase on hold below its floor of 70.
+    client.put("/profile", json={**profile_body(bank, 1500, 700, 400), "intensity": "harsh"})
     e = client.post("/evaluate?debug=true", json={"title": "Headphones", "price": 180}).json()["debug"]
     assert (e["score_after"], e["action"], e["floor"]) == (62, "block", 70)
+
+
+def test_each_agent_setting_has_its_own_thresholds(bank):
+    # A $60 item for the seeded student: 89 -> 80, a drop of 9, ending well above every threshold.
+    small = {"title": "Phone case", "price": 60}
+    # A $120 item: 89 -> 71, a drop of 18. Medium nudges on drops of 15+, Light only on 25+.
+    medium_hit = {"title": "Desk lamp", "price": 120}
+    verdicts = {}
+    for intensity in ("light", "medium", "harsh"):
+        client.put("/profile", json={**profile_body(bank, 1500, 700, 400), "intensity": intensity})
+        verdicts[intensity] = tuple(
+            client.post("/evaluate", json=item).json()["action"] for item in (small, medium_hit, {"title": "x", "price": 180})
+        )
+    assert verdicts["light"] == ("inform", "inform", "nudge")    # 89 -> 62 drops 27: past Light's 25
+    assert verdicts["medium"] == ("inform", "nudge", "nudge")
+    assert verdicts["harsh"] == ("inform", "nudge", "block")

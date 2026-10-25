@@ -130,10 +130,17 @@
 *   `score = 0.5 × bills + 0.3 × budget + 0.2 × buffer − regret_penalty[category]`, rounded. "Before" is the same with price 0. Worked example (seeded Nessie customer, $180 item): 89 → 62.
 *   Weights are tunable defaults, not research. `budget` is the discretionary amount from the user's Nessie profile (popup); buffer target and floor are settings.
 
-**Step 2: Verdict (`decide`).**
-*   **Strict** (opt-in, with a floor): `score_after < floor` → `block`. After 3 blocks in a week, Strict behaves like Aware.
-*   **Aware** (default, never blocks): drop ≥ 15 points or `score_after < 50` → `nudge`; otherwise `inform`.
-*   The user can always override.
+**Step 2: Verdict (`decide`).** The popup's Agent setting (saved per customer) picks the thresholds as well as Claude's persona (`score.INTENSITY_RULES`, `rules_for`):
+
+| Agent setting | Mode | Nudge when | Blocks when |
+|---|---|---|---|
+| Light (The Gentle Nudge) | Aware | the score drops 25+ or ends below 40 | never |
+| Medium (The Negotiator), default | Aware | drops 15+ or ends below 50 | never |
+| Harsh (The Interrogator) | Strict | drops 15+ or ends below 50 | the score ends below the floor, 70 |
+
+*   Otherwise the action is `inform` (Approved). After 3 blocks in a week, Strict behaves like Aware.
+*   `PUT /settings` mode/floor no longer drive `/evaluate` or `/chat`; they're only the fallback for callers that pass no rules (`rules_from_settings`). `buffer_target` still comes from `/settings`.
+*   The user can always override: closing the overlay and clicking Place your order again is always allowed.
 
 **Step 3: Claude wording (`llm.explain`).** A sharp, warm friend who argues the case against the purchase from the student's own money and history, in the persona the student picked. It picks the single strongest angle (already bought something similar, price vs. what's left, opportunity cost, want vs. need, why now, how a past purchase went, cost per use) and links the item to `recent_purchases` / `past_decisions` only when the facts support it. `inform` = "you're fine to buy this if you'd like" + one note, `nudge` = one real doubt, `block` = a clear position against it. Number guard, internals guard, template fallback (Rules 4–5).
 

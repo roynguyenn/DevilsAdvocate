@@ -22,6 +22,6 @@ def test_seeds_five_distinct_students_and_keeps_the_current_customer(bank, capsy
     steady = next(line for line in out.splitlines() if "SteadySaver" in line and "customer" in line)
     lines = out.splitlines()
     i = lines.index(steady)
-    assert "$180" in lines[i + 4] and "aware=inform" in lines[i + 4]
+    assert "$180" in lines[i + 4] and "medium=inform" in lines[i + 4]
     crunch_i = next(j for j, line in enumerate(lines) if "RentCrunch" in line and "customer" in line)
-    assert "strict=block" in lines[crunch_i + 3]
+    assert "harsh=block" in lines[crunch_i + 3]

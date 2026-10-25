@@ -169,7 +169,8 @@ def evaluate(purchase: Purchase, debug: bool = False):
     """The extension gets the verdict, the wording and the score (score_before/after), which it uses as a hidden
     heuristic and never shows. Claude never sees the score. `?debug=true` adds every fact for development."""
     snap = _snapshot()
-    facts = _with_context(score.evaluate(snap, purchase.model_dump(), store.load_state()), purchase.title, snap)
+    rules = score.rules_for(_intensity())  # the Agent setting picks the thresholds as well as the persona
+    facts = _with_context(score.evaluate(snap, purchase.model_dump(), store.load_state(), rules), purchase.title, snap)
     body = {
         "action": facts["action"],
         "score_before": facts["score_before"],
@@ -197,7 +198,9 @@ def chat(req: ChatRequest):
         raise HTTPException(400, "history must end with a user message")
     # Recompute facts server-side so the client can't hand Claude made-up numbers.
     snap = _snapshot()
-    facts = _with_context(score.evaluate(snap, req.purchase.model_dump(), store.load_state()), req.purchase.title, snap)
+    rules = score.rules_for(_intensity())
+    facts = _with_context(score.evaluate(snap, req.purchase.model_dump(), store.load_state(), rules), req.purchase.title,
+                          snap)
     user_turns = sum(t.role == "user" for t in req.history)
     # The cap is never shown to the user: their last allowed reply gets a wrap-up that hands them the decision,
     # and `done` tells the overlay to close the chat. Anything past the cap gets the wrap-up without calling Claude.

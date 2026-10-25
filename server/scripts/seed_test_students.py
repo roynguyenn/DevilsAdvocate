@@ -25,8 +25,8 @@ import snapshot  # noqa: E402
 import store  # noqa: E402
 
 PRICES = (60, 180, 600)
-STRICT = {"settings": {"buffer_target": 300, "mode": "strict", "floor": 70}}
-AWARE = {"settings": {"buffer_target": 300, "mode": "aware", "floor": 70}}
+STATE = {"settings": {"buffer_target": 300, "mode": "aware", "floor": 70}}
+SETTINGS = ("light", "medium", "harsh")  # the popup's Agent setting picks the thresholds
 
 
 def main() -> None:
@@ -41,10 +41,10 @@ def main() -> None:
             snap = snapshot.get_financial_snapshot(ids["account_id"])
             verdicts = []
             for price in PRICES:
-                aware = score.evaluate(snap, {"price": price}, AWARE)
-                strict = score.evaluate(snap, {"price": price}, STRICT)
-                verdicts.append(f"${price}: {aware['score_before']}->{aware['score_after']} "
-                                f"aware={aware['action']} strict={strict['action']}")
+                facts = {i: score.evaluate(snap, {"price": price}, STATE, score.rules_for(i)) for i in SETTINGS}
+                f = facts["medium"]
+                verdicts.append(f"${price}: {f['score_before']}->{f['score_after']} "
+                                + " ".join(f"{i}={facts[i]['action']}" for i in SETTINGS))
             seeded.append((s, ids, snap, verdicts))
             print(f"Created Test {ids['last_name']} ({ids['customer_id']})")
     except nessie.NessieError as e:
