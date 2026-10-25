@@ -126,6 +126,10 @@ interface InterceptorState {
   decisionLogged: boolean
   // Shown briefly after the overlay is gone, e.g. "Logged $24.99 as a purchase. Nothing was ordered."
   notice: string | null
+  // Waiting on the server after the first click; the overlay only opens if the score flags the purchase.
+  checking: boolean
+  // The agent is the judge once the overlay is open: it starts false and Claude can approve in chat.
+  agentApproved: boolean
   // Mirrors the popup's Testing switch (settings.ts) so the overlay can say no order will be placed.
   testMode: boolean
 
@@ -136,7 +140,9 @@ interface InterceptorState {
   failEvaluation: () => void
   pushMessage: (role: ChatMessage['role'], content: string) => void
   sendChat: (text: string) => Promise<void>
-  confirmPurchase: () => Promise<void>
+  // Score said it's fine: no overlay; record it as a purchase (the content script releases it in Live mode).
+  approveSilently: (e: Evaluation) => Promise<void>
+  confirmPurchase: (notice?: string) => Promise<void>
   showNotice: (text: string) => void
   logDecision: (outcome: DecisionOutcome) => void
   close: () => void
@@ -176,15 +182,21 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   chatClosed: false,
   decisionLogged: false,
   notice: null,
+  checking: false,
+  agentApproved: false,
   testMode: true,
 
   setTestMode: (testMode) => set({ testMode }),
 
   applySettings: (settings) => set({ intensity: settings.intensity }),
 
+  // First click: hold the order and wait for the score. The overlay opens only if the score flags it (or there's
+  // no price to score); a fine score never shows it.
   openIntercept: (cart) =>
     set({
-      isOpen: true,
+      isOpen: cart.total === null,
+      checking: cart.total !== null,
+      agentApproved: false,
       verdictStatus: 'negotiating',
       cart: cart.items,
       cartTotal: cart.total,
@@ -210,12 +222,15 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
 
   // The server's deterministic score replaces the pending message once it arrives, and its snapshot fills the
   // charts so they show the numbers the score used.
+  // The score flagged it: open the overlay. The order starts not approved; the agent judges from here (sendChat).
   applyEvaluation: (e) =>
     set({
+      isOpen: true,
+      checking: false,
+      agentApproved: false,
       finances: fromSnapshot(e.snapshot),
       dataSource: e.snapshot.source,
       evaluation: e,
-      // Under the threshold ('inform') the overlay still opens, but as a green light rather than a debate.
       verdictStatus: VERDICT_FOR_ACTION[e.action],
       // The score stays internal (it only decides the verdict); the user sees the explanation alone.
       chatHistory: [{ id: makeId(), role: 'agent', content: e.message }],
@@ -224,6 +239,8 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   // The checkout stays locked: with no score there is nothing to approve.
   failEvaluation: () =>
     set({
+      isOpen: true,
+      checking: false,
       financesError: "Couldn't load your bank data.",
       chatHistory: [
         {
@@ -237,17 +254,33 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   // The student closed the overlay and clicked Place your order again for the same cart: that's their decision
   // to buy. The purchase is recorded (Nessie or the Finances-tab log) and logged as "bought". In testing mode the
   // content script has already blocked the click, so nothing is ordered; in Live mode the click went on to Amazon.
-  confirmPurchase: async () => {
-    const { evaluation, decisionLogged, cart, cartTotal, testMode } = get()
+  approveSilently: async (e) => {
+    set({
+      checking: false,
+      agentApproved: true, // approved by the score itself
+      evaluation: e,
+      finances: fromSnapshot(e.snapshot),
+      dataSource: e.snapshot.source,
+    })
+    await get().confirmPurchase('Looks fine to buy.')
+  },
+
+  // Buying: either a fine score (approveSilently) or the second Place Order click after the overlay. It's always
+  // allowed; without the agent's approval it's logged as "bought_unapproved".
+  confirmPurchase: async (notice) => {
+    const { evaluation, decisionLogged, cart, cartTotal, testMode, agentApproved } = get()
     if (!evaluation || decisionLogged || cartTotal === null) return
-    get().logDecision('bought')
+    get().logDecision(agentApproved ? 'bought' : 'bought_unapproved')
     try {
       const res = await callServer<{ snapshot: ServerSnapshot }>({
         type: 'purchase',
         purchase: { title: cartTitle(cart), price: cartTotal, simulated: testMode },
       })
       set({ finances: fromSnapshot(res.snapshot), dataSource: res.snapshot.source })
-      if (testMode) get().showNotice(`Logged ${formatUsd(cartTotal)} as a purchase. Nothing was ordered (testing mode).`)
+      if (testMode) {
+        const logged = `Logged ${formatUsd(cartTotal)} as a purchase. Nothing was ordered (testing mode).`
+        get().showNotice(notice ? `${notice} ${logged}` : logged)
+      }
     } catch {
       get().showNotice("Couldn't reach the server, so this purchase wasn't added to your transactions.")
     }
@@ -274,12 +307,13 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
       content: m.content,
     }))
     try {
-      const res = await callServer<{ reply: string; done: boolean }>({
+      const res = await callServer<{ reply: string; done: boolean; approved: boolean }>({
         type: 'chat',
         purchase: { title: cartTitle(cart), price: cartTotal },
         history,
       })
       pushMessage('agent', res.reply)
+      if (res.approved && !get().agentApproved) set({ agentApproved: true, verdictStatus: 'approved' })
       if (res.done) set({ chatClosed: true })
     } catch {
       pushMessage('agent', "I couldn't reach the server. Nothing about this order has changed.")

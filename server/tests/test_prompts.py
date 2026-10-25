@@ -9,11 +9,34 @@ client = TestClient(server.app)
 
 
 def test_every_prompt_carries_the_shared_sections():
-    for prompt in (llm.system_prompt(), llm.chat_system_prompt(), llm.chat_system_prompt(final=True)):
-        for section in (llm.ROLE, llm.STANCE, llm.INFORM, llm.ANGLES, llm.LINKING, llm.RULES):
+    for section in (llm.ROLE, llm.STANCE, llm.INFORM, llm.ANGLES, llm.LINKING, llm.RULES):
+        assert section in llm.system_prompt()
+    for prompt in (llm.chat_system_prompt(), llm.chat_system_prompt(final=True)):
+        for section in (llm.ROLE, llm.STANCE, llm.ANGLES, llm.LINKING, llm.JUDGE, llm.JUDGE_FORMAT):
             assert section in prompt
-    assert llm.FINAL_TURN in llm.chat_system_prompt(final=True)
-    assert llm.FINAL_TURN not in llm.chat_system_prompt()
+        # In chat Claude is the judge, so the "you don't decide" lines are swapped out.
+        assert llm._RULES_NOT_DECIDING not in prompt and llm._CHAT_NO_CHANGE not in prompt
+    assert llm.FINAL_TURN_JUDGE in llm.chat_system_prompt(final=True)
+    assert llm.FINAL_TURN_JUDGE not in llm.chat_system_prompt()
+
+
+def test_judgment_parsing_fails_closed():
+    assert llm.parse_judgment('{"reply": "Approved, go ahead.", "approved": true}') == ("Approved, go ahead.", True)
+    fenced = '```json\n{"reply": "Not yet.", "approved": false}\n```'
+    assert llm.parse_judgment(fenced) == ("Not yet.", False)
+    for bad in (None, "", "Sure, approved!", '{"reply": "x"}', '{"reply": "x", "approved": "yes"}'):
+        assert llm.parse_judgment(bad) is None
+
+
+def test_ungrounded_or_leaky_approvals_are_refused(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    facts = {"price": 180, "monthly_bills": 700, "budget_left_after": 70, "action": "nudge"}
+    for text in ('{"reply": "Approved, and you will save 500 dollars.", "approved": true}',   # invented number
+                 '{"reply": "Your score is fine, approved.", "approved": true}',              # mentions the score
+                 'Approved!'):                                                                 # not JSON
+        monkeypatch.setattr(llm, "_ask_claude", lambda system, messages, text=text: text)
+        reply, approved = llm.chat(facts, "Headphones", [{"role": "user", "content": "please"}])
+        assert approved is False and reply.startswith("Here's where your money stands.")
 
 
 def test_persona_follows_the_agent_setting():

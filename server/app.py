@@ -106,7 +106,9 @@ class Decision(BaseModel):
     history: list[ChatTurn] = Field(max_length=20)
     # Leaving without buying is "left_checkout": we can't tell if they've decided against it or are still
     # thinking, so it isn't treated as a "no". "walked_away" (older builds) is read as left_checkout.
-    outcome: Literal["bought", "left_checkout", "walked_away"]
+    # bought = with the agent's approval (or a fine score that never opened the overlay); bought_unapproved = they
+    # overrode the agent, which is always allowed.
+    outcome: Literal["bought", "bought_unapproved", "left_checkout", "walked_away"]
 
 
 class CustomerChoice(BaseModel):
@@ -177,7 +179,9 @@ def evaluate(purchase: Purchase, debug: bool = False):
         "action": facts["action"],
         "score_before": facts["score_before"],
         "score_after": facts["score_after"],
-        "message": llm.explain(facts, _intensity()),
+        # A fine score never opens the overlay, so there's nothing for Claude to say (and no wait for it).
+        "message": llm.template_message(llm.public_facts(facts)) if facts["action"] == "inform"
+        else llm.explain(facts, _intensity()),
         "snapshot": _snapshot_for_ui(snap),
     }
     return {**body, "debug": facts} if debug else body
@@ -207,10 +211,12 @@ def chat(req: ChatRequest):
     # The cap is never shown to the user: their last allowed reply gets a wrap-up that hands them the decision,
     # and `done` tells the overlay to close the chat. Anything past the cap gets the wrap-up without calling Claude.
     if user_turns > MAX_USER_TURNS:
-        return {"reply": llm.closing_message(facts), "done": True}
+        return {"reply": llm.closing_message(facts), "done": True, "approved": False}
     final = user_turns == MAX_USER_TURNS
     history = [t.model_dump() for t in req.history]
-    return {"reply": llm.chat(facts, req.purchase.title, history, final=final, intensity=_intensity()), "done": final}
+    # Claude is the judge here: it decides whether the student's reasoning earns approval (wording and verdict).
+    reply, approved = llm.chat(facts, req.purchase.title, history, final=final, intensity=_intensity())
+    return {"reply": reply, "done": final, "approved": approved}
 
 
 def _checking_account(account_id: str) -> dict:
