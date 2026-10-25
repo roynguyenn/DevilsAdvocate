@@ -16,14 +16,16 @@ export default function RecentLedger() {
   const ledger = useInterceptorStore((s) => s.finances?.ledger)
 
   return (
-    <section className="flex min-h-[13rem] flex-1 flex-col gap-3" aria-label="Recent ledger">
+    <section className="flex flex-1 flex-col gap-3" aria-label="Recent ledger">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Transaction History</h3>
       {!ledger ? (
-        <FinancesPlaceholder className="flex-1" />
+        <FinancesPlaceholder className="min-h-[8rem] flex-1" />
       ) : ledger.length === 0 ? (
         <p className="text-sm text-zinc-500">No purchases on this account yet.</p>
       ) : (
-        <ul className="-mr-2 min-h-0 flex-1 divide-y divide-zinc-800 overflow-y-auto pr-2">
+        // Grows with its rows up to about six, then scrolls. A max height, not min-h-0 on the card, so the
+        // card always contains the list instead of letting rows spill past its border.
+        <ul className="-mr-2 max-h-[21rem] divide-y divide-zinc-800 overflow-y-auto pr-2">
           {ledger.map((t) => {
             const Icon = CATEGORY_ICONS[t.category]
             return (

@@ -22,7 +22,8 @@ function DataPanel() {
         <BudgetDonut />
       </section>
 
-      <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-zinc-700 bg-panel p-4">
+      {/* No min-h-0: the card must never shrink below its rows (they spilled past its border); the panel scrolls. */}
+      <div className="flex flex-1 flex-col rounded-xl border border-zinc-700 bg-panel p-4">
         <RecentLedger />
       </div>
 

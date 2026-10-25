@@ -27,6 +27,7 @@ function ItemThumbnail({ imageUrl }: { imageUrl: string | null }) {
 export default function CartItems() {
   const items = useInterceptorStore((s) => s.cart)
   const total = useInterceptorStore((s) => s.cartTotal)
+  const isFinal = useInterceptorStore((s) => s.cartTotalIsFinal)
   const count = items.reduce((n, i) => n + i.quantity, 0)
 
   return (
@@ -48,7 +49,7 @@ export default function CartItems() {
       <div className="flex items-baseline justify-between gap-3 border-t border-zinc-800 pt-3">
         <span className="text-xs text-zinc-400">
           {count} {count === 1 ? 'item' : 'items'}
-          {total !== null && ' · before shipping & tax'}
+          {total !== null && (isFinal ? ' · incl. shipping & tax' : ' · before shipping & tax')}
         </span>
         {total === null ? (
           <span className="text-sm text-zinc-400">Price not found on this page</span>

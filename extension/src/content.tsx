@@ -202,34 +202,33 @@ function scrapeItems(): CartItem[] {
   return []
 }
 
-// The goods being bought: the order summary's item subtotal ("Items (2):") before shipping and tax, then the
-// sum of the line items (if every one has a price), and only then the grand total.
+// Whole-label matches only, so "Total before tax:" (no tax yet) and "Total savings:" are never taken for it.
+const ORDER_TOTAL_LABEL = /^(?:Order total|Estimated total|Total)\s*:?$/i
+const GRAND_TOTAL_SELECTORS = ['.grand-total-price', '.order-summary-grand-total .a-text-right', '#subtotals-marketplace-table .a-color-price']
+
+// What the order really costs: the order total with shipping and tax. If the page shows none, the item subtotal
+// ("Items (2):") or the sum of the line items, flagged as not final so the overlay can say so.
 function scrapeTotal(items: CartItem[]) {
+  const orderTotal = priceByLabel(ORDER_TOTAL_LABEL) ?? parsePrice(firstText(GRAND_TOTAL_SELECTORS))
+  if (orderTotal !== null) return { total: orderTotal, totalIncludesShippingAndTax: true }
   const lineSum =
     items.length > 0 && items.every((i) => i.price !== null)
       ? cents(items.reduce((sum, i) => sum + (i.price ?? 0) * i.quantity, 0))
       : null
-  return (
-    priceByLabel(ITEMS_LABEL) ??
-    lineSum ??
-    parsePrice(
-      firstText(['.grand-total-price', '#subtotals-marketplace-table .a-color-price', '.order-summary-grand-total .a-text-right']),
-    ) ??
-    priceByLabel(/^Order total\s*:?$/i)
-  )
+  return { total: priceByLabel(ITEMS_LABEL) ?? lineSum, totalIncludesShippingAndTax: false }
 }
 
 // Best-effort scrape of every item on the checkout page. A missing total stays null (the overlay says so).
 function scrapeCheckout(): InterceptedCart {
   const scraped = scrapeItems()
-  const total = scrapeTotal(scraped)
+  const { total, totalIncludesShippingAndTax } = scrapeTotal(scraped)
   if (total === null) console.warn('[devils-advocate] no price found on the checkout page')
   // Lets a tester compare what was read against the page when Amazon's markup changes.
-  console.info('[devils-advocate] scraped cart', scraped, 'total', total)
+  console.info('[devils-advocate] scraped cart', scraped, 'total', total, totalIncludesShippingAndTax ? '(final)' : '(subtotal)')
   const items = scraped.length
     ? scraped
     : [{ name: 'Your Amazon order', price: total, quantity: 1, imageUrl: firstImage(ITEM_IMAGE_SELECTORS) }]
-  return { items, total }
+  return { items, total, totalIncludesShippingAndTax }
 }
 
 // null until chrome.storage answers. Treated as active so a click during startup is still caught (fail closed).

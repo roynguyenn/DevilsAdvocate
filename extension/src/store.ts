@@ -21,9 +21,10 @@ export interface CartItem {
 
 export interface InterceptedCart {
   items: CartItem[]
-  // What gets scored: the whole cart's item subtotal. null when the page has no readable price; we never
-  // substitute a made-up one.
+  // What gets scored: the order total with shipping and tax, or the item subtotal when the page shows no
+  // order total. null when the page has no readable price; we never substitute a made-up one.
   total: number | null
+  totalIncludesShippingAndTax: boolean
 }
 
 const MAX_TITLE_LENGTH = 480 // the server caps titles at 500
@@ -108,6 +109,7 @@ interface InterceptorState {
 
   cart: CartItem[]
   cartTotal: number | null
+  cartTotalIsFinal: boolean
 
   isOpen: boolean
   verdictStatus: VerdictStatus
@@ -153,6 +155,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
 
   cart: [],
   cartTotal: null,
+  cartTotalIsFinal: false,
 
   isOpen: false,
   verdictStatus: 'idle',
@@ -173,6 +176,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
       verdictStatus: 'negotiating',
       cart: cart.items,
       cartTotal: cart.total,
+      cartTotalIsFinal: cart.totalIncludesShippingAndTax,
       evaluation: null,
       finances: null,
       financesError: cart.total === null ? 'No price to score.' : null,
