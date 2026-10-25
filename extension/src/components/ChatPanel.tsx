@@ -1,26 +1,23 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { motion } from 'framer-motion'
-import { CheckCircle2, Flame, Scale, SendHorizontal, ShieldX, X } from 'lucide-react'
-import { useInterceptorStore, type VerdictStatus } from '../store'
+import { SendHorizontal, X } from 'lucide-react'
+import { intensityLevel } from '../intensity'
+import { useInterceptorStore } from '../store'
 import SimulatedBuyButton from './SimulatedBuyButton'
 import TestModeBanner from './TestModeBanner'
 
-const BADGES: Record<VerdictStatus, { label: string; className: string; Icon: typeof Scale } | null> = {
-  idle: null,
-  negotiating: { label: 'Negotiating', className: 'bg-amber-500/10 text-amber-300 ring-amber-500/40', Icon: Scale },
-  blocked: { label: 'Blocked', className: 'bg-red-500/10 text-red-300 ring-red-500/40', Icon: ShieldX },
-  approved: { label: 'Approved', className: 'bg-emerald-500/10 text-emerald-300 ring-emerald-500/40', Icon: CheckCircle2 },
-}
-
-function VerdictBadge() {
-  const status = useInterceptorStore((s) => s.verdictStatus)
-  const badge = BADGES[status]
-  if (!badge) return null
-  const { label, className, Icon } = badge
+// The Agent Intervention mode the user picked in the popup (Light / Medium / Harsh), so they can see how hard the
+// agent will push back. The verdict itself isn't badged: the score's outcome is in the agent's message.
+function IntensityBadge() {
+  const intensity = useInterceptorStore((s) => s.intensity)
+  const { persona, Icon, badgeClass } = intensityLevel(intensity)
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ring-1 ${className}`}>
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ring-1 ${badgeClass}`}
+      title="Agent Intervention mode (change it in the extension's popup)"
+    >
       <Icon className="h-3.5 w-3.5" aria-hidden />
-      {label}
+      {persona}
     </span>
   )
 }
@@ -63,7 +60,7 @@ export default function ChatPanel() {
       <header className="flex items-center justify-between border-b border-zinc-800 bg-panel px-5 py-4">
         <div className="flex items-center gap-3">
           <h2 className="text-sm font-semibold text-zinc-100">Devil's Advocate</h2>
-          <VerdictBadge />
+          <IntensityBadge />
         </div>
         <button
           type="button"
@@ -86,8 +83,8 @@ export default function ChatPanel() {
             className={`flex gap-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             {m.role === 'agent' && (
-              <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30">
-                <Flame className="h-4 w-4" aria-hidden />
+              <span className="mt-0.5 shrink-0 text-xl" aria-hidden>
+                😈
               </span>
             )}
             <p

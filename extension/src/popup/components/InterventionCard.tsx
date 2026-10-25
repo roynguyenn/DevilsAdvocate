@@ -1,54 +1,11 @@
-import { Check, Flame, Scale, TriangleAlert, type LucideIcon } from 'lucide-react'
-import { type Intensity } from '../../settings'
+import { Check } from 'lucide-react'
+import { INTENSITY_LEVELS, intensityLevel } from '../../intensity'
 import { usePopupStore } from '../store'
-
-interface Level {
-  id: Intensity
-  name: string
-  persona: string
-  Icon: LucideIcon
-  iconClass: string
-  selectedClass: string
-  description: string
-}
-
-const LEVELS: Level[] = [
-  {
-    id: 'light',
-    name: 'Light',
-    persona: 'The Gentle Nudge',
-    Icon: TriangleAlert,
-    iconClass: 'text-yellow-400',
-    selectedClass: 'border-yellow-400/70 bg-yellow-400/10',
-    description:
-      'Intervenes only when necessary. Provides a quick budget reminder and a simple "Are you sure?" before the purchase goes through. Low friction.',
-  },
-  {
-    id: 'medium',
-    name: 'Medium',
-    persona: 'The Negotiator',
-    Icon: Scale,
-    iconClass: 'text-amber-400',
-    selectedClass: 'border-amber-500/70 bg-amber-500/10',
-    description:
-      'Weighs the purchase against your daily budget, suggests alternatives, and requires a brief rationalization before unlocking checkout.',
-  },
-  {
-    id: 'harsh',
-    name: 'Harsh',
-    persona: 'The Interrogator',
-    Icon: Flame,
-    iconClass: 'text-red-400',
-    selectedClass: 'border-red-500/70 bg-red-500/10',
-    description:
-      'Maximum friction. Aggressively challenges impulse buys, calls out missed savings goals, and demands a robust defense.',
-  },
-]
 
 export default function InterventionCard() {
   const intensity = usePopupStore((s) => s.draft.intensity)
   const setIntensity = usePopupStore((s) => s.setIntensity)
-  const selected = LEVELS.find((l) => l.id === intensity) ?? LEVELS[1]
+  const selected = intensityLevel(intensity)
 
   return (
     <section className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-panel p-4" aria-labelledby="intervention-title">
@@ -58,7 +15,7 @@ export default function InterventionCard() {
       </div>
 
       <div role="radiogroup" aria-labelledby="intervention-title" className="grid grid-cols-3 gap-2">
-        {LEVELS.map(({ id, name, persona, Icon, iconClass, selectedClass }) => {
+        {INTENSITY_LEVELS.map(({ id, name, persona, Icon, iconClass, selectedClass }) => {
           const isSelected = id === intensity
           return (
             <button
