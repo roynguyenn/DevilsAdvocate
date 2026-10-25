@@ -104,7 +104,9 @@ class Decision(BaseModel):
 
     purchase: Purchase
     history: list[ChatTurn] = Field(max_length=20)
-    outcome: Literal["bought", "walked_away"]
+    # Leaving without buying is "left_checkout": we can't tell if they've decided against it or are still
+    # thinking, so it isn't treated as a "no". "walked_away" (older builds) is read as left_checkout.
+    outcome: Literal["bought", "left_checkout", "walked_away"]
 
 
 class CustomerChoice(BaseModel):
@@ -288,8 +290,9 @@ def put_customer(choice: CustomerChoice):
 
 @app.post("/decision")
 def post_decision(d: Decision):
-    """Log how a checkout ended (bought or walked away) as a 1-2 line summary for next time."""
-    return decisions.record(d.purchase.title, d.purchase.price, d.outcome, [t.model_dump() for t in d.history],
+    """Log how a checkout ended (bought, or left without buying) as a 1-2 line summary for next time."""
+    outcome = "left_checkout" if d.outcome == "walked_away" else d.outcome
+    return decisions.record(d.purchase.title, d.purchase.price, outcome, [t.model_dump() for t in d.history],
                             customer_id=_profile_key())
 
 

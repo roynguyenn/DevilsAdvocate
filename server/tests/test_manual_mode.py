@@ -58,10 +58,10 @@ def test_purchases_through_the_extension_are_the_spending_history():
 
 def test_decisions_and_intensity_are_kept_under_the_manual_profile():
     go_manual(intensity="harsh")
-    client.post("/decision", json={"purchase": HEADPHONES, "history": [], "outcome": "walked_away"})
+    client.post("/decision", json={"purchase": HEADPHONES, "history": [], "outcome": "left_checkout"})
     assert len(store.load_customer(manual.MANUAL_KEY)["decisions"]) == 1
     assert server._intensity() == "harsh"
-    assert client.get("/decisions").json()[0]["outcome"] == "walked_away"
+    assert client.get("/decisions").json()[0]["outcome"] == "left_checkout"
 
 
 def test_linking_a_bank_or_picking_a_customer_switches_back(bank):

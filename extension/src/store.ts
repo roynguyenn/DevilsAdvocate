@@ -120,7 +120,7 @@ interface InterceptorState {
   isAgentTyping: boolean
   // Set when the server wraps the chat up. The reply cap lives only on the server and is never shown.
   chatClosed: boolean
-  // One decision-log entry per checkout: bought (simulated) or walked away (closed without buying).
+  // One decision-log entry per checkout: bought, or left_checkout (left without buying; may still be deciding).
   decisionLogged: boolean
   // Shown briefly after the overlay is gone, e.g. "Logged $24.99 as a purchase. Nothing was ordered."
   notice: string | null
@@ -299,6 +299,6 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   },
 
   // Closing just returns to the checkout page; the decision is still open. Clicking Place your order again buys
-  // (confirmPurchase); leaving the page or checking out a different cart logs "walked_away" (content.tsx).
+  // (confirmPurchase); leaving the page or checking out a different cart logs "left_checkout" (content.tsx).
   close: () => set({ isOpen: false, verdictStatus: 'idle' }),
 }))

@@ -302,7 +302,7 @@ function intercept(e: Event) {
   e.preventDefault()
   e.stopImmediatePropagation()
   // A different cart means the previous one was left behind.
-  useInterceptorStore.getState().logDecision('walked_away')
+  useInterceptorStore.getState().logDecision('left_checkout')
   const cart = scrapeCheckout()
   useInterceptorStore.getState().openIntercept(cart)
   requestEvaluation(cart)
@@ -355,9 +355,9 @@ function init() {
   onSettingsChanged(applySettings)
   loadTestMode().then(applyTestMode, () => applyTestMode(true))
   onTestModeChanged(applyTestMode)
-  // Leaving the checkout without clicking Place your order again means they walked away (best effort: the
+  // Leaving the checkout without clicking Place your order again means they left it for now (best effort: the
   // message may not make it out if the tab is closing).
-  window.addEventListener('pagehide', () => useInterceptorStore.getState().logDecision('walked_away'))
+  window.addEventListener('pagehide', () => useInterceptorStore.getState().logDecision('left_checkout'))
   mountOverlay()
   window.addEventListener('click', onClick, true)
   window.addEventListener('submit', onSubmit, true)

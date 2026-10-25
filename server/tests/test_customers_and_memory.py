@@ -66,19 +66,19 @@ def test_similar_titles_match_and_different_ones_dont():
 def test_decision_is_logged_per_customer_with_outcome_and_reason(bank):
     history = [{"role": "assistant", "content": "This order is on hold for now."},
                {"role": "user", "content": "Fine, rent comes first this month."}]
-    entry = client.post("/decision", json={"purchase": HEADPHONES, "history": history, "outcome": "walked_away"}).json()
+    entry = client.post("/decision", json={"purchase": HEADPHONES, "history": history, "outcome": "left_checkout"}).json()
     # No API key in tests, so the template summary is used.
-    assert entry["summary"].startswith("Walked away from Sony WH-1000XM5")
+    assert entry["summary"].startswith("Left checkout without buying Sony WH-1000XM5")
     assert "rent comes first" in entry["summary"]
     assert client.get("/decisions").json() == [entry]
     assert store.load_customer(bank.ids["customer_id"])["decisions"] == [entry]
 
 
 def test_past_decisions_reach_claude_for_a_similar_item_only(bank):
-    client.post("/decision", json={"purchase": HEADPHONES, "history": [], "outcome": "walked_away"})
+    client.post("/decision", json={"purchase": HEADPHONES, "history": [], "outcome": "left_checkout"})
     same = client.post("/evaluate?debug=true", json={"title": "Sony WH-1000XM5 Headphones", "price": 180}).json()
     other = client.post("/evaluate?debug=true", json={"title": "Instant Pot Duo", "price": 80}).json()
-    assert same["debug"]["past_decisions"] and "Walked away" in same["debug"]["past_decisions"][0]
+    assert same["debug"]["past_decisions"] and "Left checkout" in same["debug"]["past_decisions"][0]
     assert "past_decisions" not in other["debug"]
     assert "past_decisions" in llm.public_facts(same["debug"])  # Claude sees them
     assert not {"score_before", "score_after"} & set(llm.public_facts(same["debug"]))  # Claude never sees the score
@@ -93,3 +93,8 @@ def test_memory_never_changes_the_verdict(bank):
 
 def test_summary_falls_back_when_no_reason_was_given():
     assert llm.summary_template("Phone case", 20, "bought", []) == "Bought Phone case ($20.00). No reason given."
+
+
+def test_older_walked_away_is_recorded_as_left_checkout(bank):
+    entry = client.post("/decision", json={"purchase": HEADPHONES, "history": [], "outcome": "walked_away"}).json()
+    assert entry["outcome"] == "left_checkout" and entry["summary"].startswith("Left checkout without buying")

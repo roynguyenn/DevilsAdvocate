@@ -47,7 +47,8 @@ export interface CustomerList {
   customers: CustomerOption[]
 }
 
-export type DecisionOutcome = 'bought' | 'walked_away'
+// left_checkout = left without buying: they may still be deciding, so it isn't a "no".
+export type DecisionOutcome = 'bought' | 'left_checkout'
 
 export type ServerRequest =
   | { type: 'evaluate'; purchase: Purchase }
