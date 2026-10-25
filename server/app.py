@@ -181,7 +181,7 @@ def evaluate(purchase: Purchase, debug: bool = False):
         "score_after": facts["score_after"],
         # A fine score never opens the overlay, so there's nothing for Claude to say (and no wait for it).
         "message": llm.template_message(llm.public_facts(facts)) if facts["action"] == "inform"
-        else llm.explain(facts, _intensity()),
+        else llm.explain(facts, _intensity(), purchase.title),
         "snapshot": _snapshot_for_ui(snap),
     }
     return {**body, "debug": facts} if debug else body

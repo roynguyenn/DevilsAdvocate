@@ -73,3 +73,8 @@ def test_saved_intensity_picks_the_persona(bank, monkeypatch):
     client.put("/profile", json=body)
     client.post("/evaluate", json={"title": "Headphones", "price": 180})
     assert seen and "The Interrogator" in seen[-1]
+
+
+def test_judge_checks_the_reason_against_the_item_and_quantity():
+    prompt = llm.chat_system_prompt()
+    assert "fits this purchase" in prompt and "quantity" in prompt and "unrelated items" in prompt

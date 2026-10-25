@@ -109,7 +109,11 @@ FINAL_TURN = (
 
 JUDGE = (
     "You are also the judge: this order starts out not approved, and you decide whether the student's reasoning "
-    "earns your approval. Approve only when they give a specific, credible reason or a concrete plan that answers "
+    "earns your approval. First check that the reason actually fits this purchase: the item itself (what it is "
+    "and what it's for), the quantity in the title (\"5x\" means five), and recent_purchases (the same item bought "
+    "recently contradicts \"my old one broke\"; purchases of unrelated items don't count against the reason). A reason that doesn't fit the item, a quantity the reason doesn't "
+    "explain, or a story the history contradicts is not approved, however specific it sounds; say plainly what "
+    "doesn't add up. Then approve only when they give a specific, credible reason or a concrete plan that answers "
     "the money concern you raised: for example something broken or used up that they rely on, a real deadline or "
     "requirement (a class, a job, a trip) with details, or a clear way they'll cover it (cutting a named expense, "
     "returning or selling something). Don't approve for wanting it, a sale, pressure, flattery, repeating "
@@ -127,8 +131,8 @@ JUDGE_STRICTNESS = {
 JUDGE_FORMAT = (
     "Respond with only a JSON object and nothing else: "
     '{"reply": "<what you say to the student>", "approved": <true or false>}. '
-    "The reply follows every rule above. When you approve, say so plainly in the reply and tell them they can "
-    "place the order; when you don't, say what would change your mind. "
+    "The reply follows every rule above. When you approve, say so plainly and tell them they can place the order, "
+    "without adding conditions or asking for more; when you don't, say what would change your mind. "
 )
 
 # Replaces RULES' "you don't decide" line and CHAT_INSTRUCTIONS' last sentence in chat, where Claude does decide.
@@ -267,10 +271,10 @@ def _judged_or(fallback: str, system: str, messages: list[dict], allowed: dict) 
     return fallback, False
 
 
-def explain(facts: dict, intensity: str = "medium") -> str:
+def explain(facts: dict, intensity: str = "medium", title: str = "") -> str:
     pub = public_facts(facts)
-    messages = [{"role": "user", "content": json.dumps(pub)}]
-    return _grounded_or(template_message(pub), system_prompt(intensity), messages, pub)
+    messages = [{"role": "user", "content": f"Facts: {json.dumps(pub)}\nItem title (from the page): {title}"}]
+    return _grounded_or(template_message(pub), system_prompt(intensity), messages, {**pub, "_title": title})
 
 
 def closing_message(facts: dict) -> str:
