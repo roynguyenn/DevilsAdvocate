@@ -19,8 +19,14 @@ export default function AccountCard({ onConnect }: Props) {
   return (
     <section className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-panel p-4" aria-labelledby="account-title">
       <div>
-        <h2 id="account-title" className="text-sm font-semibold text-zinc-100">Account Connection</h2>
-        <p className="text-xs text-zinc-400">The agent reads your real spending through Capital One.</p>
+        <h2 id="account-title" className="text-sm font-semibold text-zinc-100">
+          Account Connection <span className="font-normal text-zinc-500">(optional)</span>
+        </h2>
+        <p className="text-xs text-zinc-400">
+          {account
+            ? 'The agent reads your real spending through Capital One.'
+            : 'Skip this to use only your Finances tab: purchases are judged against your budget, without your balance or bank history.'}
+        </p>
       </div>
 
       <CustomerPicker />

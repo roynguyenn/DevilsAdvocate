@@ -13,9 +13,10 @@ export interface ChatTurn {
   content: string
 }
 
-// The popup's Finances tab as the server writes it to Nessie (PUT /profile).
+// The popup's config as the server saves it (PUT /profile). account_id null = no bank linked: the Finances tab
+// alone is used, stored on our server.
 export interface ProfileInput {
-  account_id: string
+  account_id: string | null
   monthly_income: number
   fixed_bills: number
   savings: number
@@ -26,7 +27,8 @@ export interface ProfileInput {
 
 // What Nessie holds after a read or write (GET|PUT /profile).
 export interface ServerProfile {
-  account: LinkedAccount
+  // null when no bank is linked (Finances tab only).
+  account: LinkedAccount | null
   monthly_income: number
   fixed_bills: number
   savings: number

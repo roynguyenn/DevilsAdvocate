@@ -49,7 +49,7 @@ export interface Transaction {
 
 // Which data the server read (server/snapshot.py describe_source). Shown so developers know what they're testing.
 export type DataSource =
-  | { type: 'seed' }
+  | { type: 'manual' } // no bank linked: Finances tab + purchases made through the extension
   | { type: 'nessie'; customer_id: string; account_id: string; customer_name: string }
 
 // What the server's charts data looks like (server/app.py _snapshot_for_ui), all read from Nessie.
@@ -60,7 +60,8 @@ export interface ServerSnapshot {
   // Discretionary budget: income - fixed bills - savings.
   budget: number
   spent_this_month: number
-  balance: number
+  // null when no bank is linked.
+  balance: number | null
   transactions: Transaction[]
   source: DataSource
 }

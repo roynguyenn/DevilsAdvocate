@@ -76,13 +76,14 @@ function allocationOf({ monthlyIncome, fixedBills, savings, discretionary }: Dra
 export const selectAllocation = (s: PopupState) => allocationOf(s.draft)
 
 // The Enabled switch acts on the *saved* configuration, so it's only usable once a complete setup has been saved.
-export const selectCanEnable = (s: PopupState) => s.saved.account !== null && allocationOf(s.saved).isBalanced
+// A bank link is optional: without one, the agent works from the Finances tab alone.
+export const selectCanEnable = (s: PopupState) => allocationOf(s.saved).isBalanced
 
 export const selectIsDirty = (s: PopupState) =>
   (Object.keys(s.draft) as (keyof Draft)[]).some((k) => JSON.stringify(s.draft[k]) !== JSON.stringify(s.saved[k]))
 
 export const selectSectionComplete = (s: PopupState, section: Section) => {
-  if (section === 'account') return s.draft.account !== null
+  if (section === 'account') return true // optional
   if (section === 'finances') return selectAllocation(s).isBalanced
   return true // intensity always has a value (defaults to medium)
 }
@@ -94,13 +95,11 @@ export interface SaveBlocker {
 
 // Returns a stable reference per reason so it can be used directly as a Zustand selector.
 const BLOCKERS = {
-  account: { message: 'Connect a bank account to continue.', section: 'account' },
   income: { message: 'Enter your monthly net income.', section: 'finances' },
   balance: { message: 'Fixed bills, savings and discretionary must add up to 100% of income.', section: 'finances' },
 } satisfies Record<string, SaveBlocker>
 
 export const selectSaveBlocker = (s: PopupState): SaveBlocker | null => {
-  if (!s.draft.account) return BLOCKERS.account
   if (s.draft.monthlyIncome <= 0) return BLOCKERS.income
   if (!selectAllocation(s).isBalanced) return BLOCKERS.balance
   return null
@@ -129,7 +128,7 @@ export const usePopupStore = create<PopupState>((set, get) => {
       // The server is the source of truth: show what it holds for the current customer now (e.g. after a demo
       // reset or a customer switch), not what this browser saved last time. If the server is down, the last
       // saved values stay.
-      if (!stored.account) return
+      if (!stored.account && stored.monthlyIncome <= 0) return // never set up
       try {
         const saved: Settings = { ...get().saved, ...fromProfile(await fetchProfile()) }
         set((s) => ({ saved, draft: selectIsDirty(s) ? s.draft : toDraft(saved) }))
@@ -171,13 +170,13 @@ export const usePopupStore = create<PopupState>((set, get) => {
 
     save: async () => {
       const { draft } = get()
-      if (selectSaveBlocker(get()) || !draft.account) return
+      if (selectSaveBlocker(get())) return
       set({ saving: true, saveError: null })
       try {
         const profile = await callServer<ServerProfile>({
           type: 'saveProfile',
           profile: {
-            account_id: draft.account.id,
+            account_id: draft.account?.id ?? null,
             monthly_income: draft.monthlyIncome,
             fixed_bills: draft.fixedBills,
             savings: draft.savings,

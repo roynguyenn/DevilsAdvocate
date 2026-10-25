@@ -1,14 +1,14 @@
 import { Database } from 'lucide-react'
 import { useInterceptorStore } from '../store'
 
-// Dev aid: shows which data the server read, so it's obvious when the overlay is on mock, seed or Nessie data.
+// Dev aid: shows which data the server read: a Nessie customer, or the Finances tab only (no bank linked).
 export default function DataSourceBadge() {
   const source = useInterceptorStore((s) => s.dataSource)
 
   const label = !source
     ? 'Data: mock (server not connected)'
-    : source.type === 'seed'
-      ? 'Data: seed file'
+    : source.type === 'manual'
+      ? 'Data: Finances tab only (no bank linked)'
       : `Data: Nessie · ${source.customer_name} · customer ${source.customer_id}`
 
   return (

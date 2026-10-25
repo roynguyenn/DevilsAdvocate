@@ -9,6 +9,8 @@ from dataclasses import dataclass, asdict
 # Tunable defaults (brief section 8). The budget comes from the user's Nessie profile; buffer/floor are
 # settings; these weights are ours.
 WEIGHTS = {"bills": 0.5, "budget": 0.3, "buffer": 0.2}
+# Finances-tab-only mode (no bank linked): there's no balance, so only the budget can be judged.
+BUDGET_ONLY_WEIGHTS = {"budget": 0.7, "size": 0.3}
 AWARE_NUDGE_DROP = 15  # Aware mode offers "Sleep on it" when the score drops this much...
 AWARE_NUDGE_BELOW = 50  # ...or ends below this.
 STRICT_MAX_BLOCKS_PER_WEEK = 3
@@ -53,6 +55,17 @@ def compute_components(
     return Components(bills_score, budget_score, buffer_score, penalty, round(clamp(raw)))
 
 
+def compute_budget_only(budget: float, spent: float, price: float = 0, penalty: float = 0) -> Components:
+    """Score from the Finances tab alone (no bank linked): how much of the month's discretionary budget is left
+    after this purchase, and how big this one purchase is against the whole budget. Pass price=0 for 'before'."""
+    left_after = budget - spent - price
+    budget_score = clamp(100 * left_after / budget) if budget > 0 else 0.0
+    size_score = clamp(100 * (1 - price / budget)) if budget > 0 else 0.0
+    raw = BUDGET_ONLY_WEIGHTS["budget"] * budget_score + BUDGET_ONLY_WEIGHTS["size"] * size_score - penalty
+    # Reuses Components: `bills` carries the size score here, and `buffer` is unused.
+    return Components(size_score, budget_score, 0.0, penalty, round(clamp(raw)))
+
+
 def decide(score_before: int, score_after: int, mode: str, floor: int, blocks_this_week: int) -> dict:
     """Turn two scores into what the card should do. Override is always possible."""
     # After 3 blocks in a week, Strict falls through to Aware behaviour.
@@ -67,15 +80,20 @@ def evaluate(snapshot: dict, purchase: dict, state: dict) -> dict:
     settings = state["settings"]
     penalty = state.get("regret_penalty", {}).get(purchase.get("category", "other"), 0)
 
-    common = dict(
-        balance=snapshot["balance"],
-        monthly_bills=snapshot["monthly_bills"],
-        budget=snapshot["budget"],
-        spent=snapshot["spent_this_month"],
-        buffer_target=settings["buffer_target"],
-    )
-    before = compute_components(**common)
-    after = compute_components(**common, price=purchase["price"], penalty=penalty)
+    bank_linked = snapshot["balance"] is not None
+    if bank_linked:
+        common = dict(
+            balance=snapshot["balance"],
+            monthly_bills=snapshot["monthly_bills"],
+            budget=snapshot["budget"],
+            spent=snapshot["spent_this_month"],
+            buffer_target=settings["buffer_target"],
+        )
+        before = compute_components(**common)
+        after = compute_components(**common, price=purchase["price"], penalty=penalty)
+    else:
+        before = compute_budget_only(snapshot["budget"], snapshot["spent_this_month"])
+        after = compute_budget_only(snapshot["budget"], snapshot["spent_this_month"], purchase["price"], penalty)
 
     verdict = decide(before.total, after.total, settings["mode"], settings["floor"], state.get("blocks_this_week", 0))
     facts = {
@@ -83,12 +101,15 @@ def evaluate(snapshot: dict, purchase: dict, state: dict) -> dict:
         "score_after": after.total,
         "components_after": {k: round(v, 1) for k, v in asdict(after).items()},
         "price": purchase["price"],
-        "balance_after": round(snapshot["balance"] - purchase["price"], 2),
         "monthly_bills": snapshot["monthly_bills"],
         "budget_left_after": round(snapshot["budget"] - snapshot["spent_this_month"] - purchase["price"], 2),
         "mode": settings["mode"],
         **verdict,
     }
+    # Without a bank there's no balance to talk about, so Claude never gets one.
+    if bank_linked:
+        facts["balance_after"] = round(snapshot["balance"] - purchase["price"], 2)
+    facts["formula"] = "full" if bank_linked else "budget_only"
     # The floor only means something in Strict mode; leaving it out stops the LLM mentioning it in Aware.
     if settings["mode"] == "strict":
         facts["floor"] = settings["floor"]

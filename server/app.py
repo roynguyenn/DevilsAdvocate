@@ -18,6 +18,7 @@ import customers  # noqa: E402
 import decisions  # noqa: E402
 import finances  # noqa: E402
 import llm  # noqa: E402
+import manual  # noqa: E402
 import nessie  # noqa: E402
 import score  # noqa: E402
 import store  # noqa: E402
@@ -59,7 +60,8 @@ class Settings(BaseModel):
 class Profile(BaseModel):
     """The popup's Finances tab. Stored in Nessie; discretionary is derived there, so it must balance here."""
 
-    account_id: str = Field(min_length=1, max_length=100)
+    # None = no bank linked: the student uses the Finances tab only (manual.py), stored on our server.
+    account_id: str | None = Field(default=None, min_length=1, max_length=100)
     monthly_income: float = Field(gt=0, le=1_000_000)
     fixed_bills: float = Field(ge=0, le=1_000_000)
     savings: float = Field(ge=0, le=1_000_000)
@@ -112,9 +114,19 @@ class CustomerChoice(BaseModel):
 MAX_USER_TURNS = 3
 
 
+def _snapshot() -> dict:
+    """Nessie when the student linked their bank; otherwise the Finances tab and their in-extension purchases."""
+    return get_financial_snapshot() if manual.bank_linked() else manual.snapshot()
+
+
+def _profile_key() -> str:
+    """Whose decision log and intensity to use: the Nessie customer, or the Finances-tab-only profile."""
+    return finances.current_customer_id() if manual.bank_linked() else manual.MANUAL_KEY
+
+
 @app.get("/health")
 def health():
-    return {"ok": True, "source": describe_source()}
+    return {"ok": True, "source": describe_source() if manual.bank_linked() else {"type": "manual"}}
 
 
 UI_SNAPSHOT_KEYS = ("monthly_income", "monthly_bills", "savings", "budget", "spent_this_month", "balance",
@@ -139,22 +151,24 @@ def _when(ts: int, now_ms: int) -> str:
 def _with_context(facts: dict, title: str, snap: dict) -> dict:
     """Add what Claude needs to link this item to their history: recent purchases and past decisions."""
     now_ms = int(time.time() * 1000)
-    recent = [{"merchant": t["merchant"], "category": t["category"], "amount": t["amount"], "when": _when(t["timestamp"], now_ms)}
+    recent = [{"merchant": t["merchant"], "category": t["category"], "amount": t["amount"], "when": _when(t["timestamp"], now_ms),
+               # Purchases made through the extension know what the item was, so Claude can link "jeans" to "jeans".
+               **({"item": t["title"]} if t.get("title") else {})}
               for t in snap["transactions"][:RECENT_FOR_LLM]]
-    past = decisions.relevant(title)
+    past = decisions.relevant(title, _profile_key())
     return {**facts, "recent_purchases": recent, **({"past_decisions": past} if past else {})}
 
 
 def _intensity() -> str:
     """The popup's Agent setting for the current customer: picks Claude's persona."""
-    return store.load_customer(finances.current_customer_id())["intensity"]
+    return store.load_customer(_profile_key())["intensity"]
 
 
 @app.post("/evaluate")
 def evaluate(purchase: Purchase, debug: bool = False):
     """The extension gets the verdict, the wording and the score (score_before/after), which it uses as a hidden
     heuristic and never shows. Claude never sees the score. `?debug=true` adds every fact for development."""
-    snap = get_financial_snapshot()
+    snap = _snapshot()
     facts = _with_context(score.evaluate(snap, purchase.model_dump(), store.load_state()), purchase.title, snap)
     body = {
         "action": facts["action"],
@@ -170,8 +184,11 @@ def evaluate(purchase: Purchase, debug: bool = False):
 def simulate_purchase(purchase: Purchase):
     """'Buy it/anyway' in the overlay: records the purchase in Nessie. In Testing mode it's simulated and nothing is
     ordered; in Live mode (simulated=false) the extension then releases the real Place Order click itself."""
-    record_simulated_purchase(purchase.title, purchase.price, simulated=purchase.simulated)
-    return {"snapshot": _snapshot_for_ui(get_financial_snapshot())}
+    if manual.bank_linked():
+        record_simulated_purchase(purchase.title, purchase.price, simulated=purchase.simulated)
+    else:
+        manual.record_purchase(purchase.title, purchase.price, simulated=purchase.simulated)
+    return {"snapshot": _snapshot_for_ui(_snapshot())}
 
 
 @app.post("/chat")
@@ -179,7 +196,7 @@ def chat(req: ChatRequest):
     if not req.history or req.history[-1].role != "user":
         raise HTTPException(400, "history must end with a user message")
     # Recompute facts server-side so the client can't hand Claude made-up numbers.
-    snap = get_financial_snapshot()
+    snap = _snapshot()
     facts = _with_context(score.evaluate(snap, req.purchase.model_dump(), store.load_state()), req.purchase.title, snap)
     user_turns = sum(t.role == "user" for t in req.history)
     # The cap is never shown to the user: their last allowed reply gets a wrap-up that hands them the decision,
@@ -209,15 +226,31 @@ def accounts():
     return [finances.account_summary(a) for a in finances.checking_accounts()]
 
 
+def _manual_profile_response() -> dict:
+    return {"account": None, **manual.get_profile(), "intensity": store.load_customer(manual.MANUAL_KEY)["intensity"]}
+
+
 @app.get("/profile")
 def get_profile(account_id: str | None = None):
-    """The financial profile as Nessie holds it, for the linked account (or `account_id`, to preview one)."""
+    """The current config: from Nessie for the linked account (or `account_id`, to preview one), or the
+    Finances-tab-only profile when no bank is linked (`account` is then null)."""
+    if account_id is None and not manual.bank_linked():
+        return _manual_profile_response()
     return _profile_response(_checking_account(account_id or finances.linked_account_id()))
 
 
 @app.put("/profile")
 def put_profile(profile: Profile):
-    """Write the popup's Finances tab to Nessie and link the account; returns what Nessie now holds."""
+    """Save the popup's config. With an account: write the Finances tab to Nessie and link it (bank mode).
+    Without one: keep the Finances tab on our server and score from it alone (manual.py)."""
+    if profile.account_id is None:
+        manual.save_profile(profile.monthly_income, profile.fixed_bills, profile.savings)
+        manual.set_bank_linked(False)
+        if profile.intensity:
+            data = store.load_customer(manual.MANUAL_KEY)
+            data["intensity"] = profile.intensity
+            store.save_customer(manual.MANUAL_KEY, data)
+        return _manual_profile_response()
     account = _checking_account(profile.account_id)
     try:
         finances.save_profile(account["_id"], profile.monthly_income, profile.fixed_bills, profile.savings)
@@ -229,6 +262,7 @@ def put_profile(profile: Profile):
     if profile.intensity:
         data["intensity"] = profile.intensity
     store.save_customer(customer_id, data)
+    manual.set_bank_linked(True)
     return _profile_response(account)
 
 
@@ -243,6 +277,7 @@ def put_customer(choice: CustomerChoice):
     """Switch the server to another Nessie customer. Their linked account, finances and intensity come with them."""
     try:
         chosen = customers.select_customer(choice.customer_id)
+        manual.set_bank_linked(True)  # picking a bank customer means reading their bank
     except LookupError as e:
         raise HTTPException(409, str(e)) from None
     return {"customer": chosen, "profile": _profile_response(_checking_account(finances.linked_account_id()))}
@@ -251,13 +286,14 @@ def put_customer(choice: CustomerChoice):
 @app.post("/decision")
 def post_decision(d: Decision):
     """Log how a checkout ended (bought or walked away) as a 1-2 line summary for next time."""
-    return decisions.record(d.purchase.title, d.purchase.price, d.outcome, [t.model_dump() for t in d.history])
+    return decisions.record(d.purchase.title, d.purchase.price, d.outcome, [t.model_dump() for t in d.history],
+                            customer_id=_profile_key())
 
 
 @app.get("/decisions")
 def get_decisions():
     """This customer's decision log, oldest first (for development)."""
-    return decisions.history()
+    return decisions.history(_profile_key())
 
 
 @app.get("/settings")
