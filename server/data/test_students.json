@@ -1,0 +1,86 @@
+{
+  "_note": "Five fake test students for scripts/seed_test_students.py, each a different money situation. Merchants are shared; days_ago is relative to the day you seed (clamped into the current month).",
+  "merchants": {
+    "Amazon.com": "shopping",
+    "Uber": "transport",
+    "Starbucks": "coffee",
+    "Whole Foods Market": "groceries",
+    "Netflix": "subscriptions",
+    "Chipotle": "dining"
+  },
+  "students": [
+    {
+      "last_name": "SteadySaver",
+      "story": "Comfortable: healthy balance, low spending. Approved even at $180.",
+      "checking_balance": 3200,
+      "profile": {"monthly_income": 2500, "fixed_bills": 900, "savings": 600},
+      "purchases": [
+        {"merchant": "Whole Foods Market", "amount": 52.10, "days_ago": 2},
+        {"merchant": "Netflix", "amount": 15.49, "days_ago": 4},
+        {"merchant": "Starbucks", "amount": 5.25, "days_ago": 1},
+        {"merchant": "Uber", "amount": 12.40, "days_ago": 3},
+        {"merchant": "Chipotle", "amount": 34.76, "days_ago": 5}
+      ]
+    },
+    {
+      "last_name": "RentCrunch",
+      "story": "Bills eat the balance: nudge on anything, blocked in Strict mode.",
+      "checking_balance": 950,
+      "profile": {"monthly_income": 1600, "fixed_bills": 850, "savings": 150},
+      "purchases": [
+        {"merchant": "Whole Foods Market", "amount": 64.30, "days_ago": 1},
+        {"merchant": "Uber", "amount": 22.75, "days_ago": 2},
+        {"merchant": "Chipotle", "amount": 14.20, "days_ago": 2},
+        {"merchant": "Amazon.com", "amount": 38.99, "days_ago": 3},
+        {"merchant": "Starbucks", "amount": 6.50, "days_ago": 4},
+        {"merchant": "Netflix", "amount": 15.49, "days_ago": 5},
+        {"merchant": "Whole Foods Market", "amount": 17.77, "days_ago": 6}
+      ]
+    },
+    {
+      "last_name": "OverBudget",
+      "story": "Already spent this month's budget: nudge on anything.",
+      "checking_balance": 1150,
+      "profile": {"monthly_income": 1800, "fixed_bills": 900, "savings": 400},
+      "purchases": [
+        {"merchant": "Amazon.com", "amount": 129.99, "days_ago": 1},
+        {"merchant": "Chipotle", "amount": 41.30, "days_ago": 1},
+        {"merchant": "Uber", "amount": 36.80, "days_ago": 2},
+        {"merchant": "Amazon.com", "amount": 89.99, "days_ago": 3},
+        {"merchant": "Whole Foods Market", "amount": 112.43, "days_ago": 4},
+        {"merchant": "Starbucks", "amount": 18.00, "days_ago": 5},
+        {"merchant": "Netflix", "amount": 15.49, "days_ago": 6},
+        {"merchant": "Amazon.com", "amount": 26.00, "days_ago": 6}
+      ]
+    },
+    {
+      "last_name": "ImpulseShopper",
+      "story": "Lots of small recent Amazon orders: fine at $60, nudge at $180; good for history linking.",
+      "checking_balance": 1400,
+      "profile": {"monthly_income": 1500, "fixed_bills": 700, "savings": 400},
+      "purchases": [
+        {"merchant": "Amazon.com", "amount": 24.99, "days_ago": 0},
+        {"merchant": "Amazon.com", "amount": 39.99, "days_ago": 1},
+        {"merchant": "Amazon.com", "amount": 19.99, "days_ago": 1},
+        {"merchant": "Amazon.com", "amount": 54.99, "days_ago": 2},
+        {"merchant": "Amazon.com", "amount": 29.99, "days_ago": 3},
+        {"merchant": "Starbucks", "amount": 7.10, "days_ago": 3},
+        {"merchant": "Uber", "amount": 16.45, "days_ago": 4},
+        {"merchant": "Amazon.com", "amount": 34.99, "days_ago": 5},
+        {"merchant": "Netflix", "amount": 15.49, "days_ago": 6},
+        {"merchant": "Chipotle", "amount": 15.52, "days_ago": 6}
+      ]
+    },
+    {
+      "last_name": "FreshPaycheck",
+      "story": "Just got paid, barely spent: approved at $180, nudge at $600.",
+      "checking_balance": 2600,
+      "profile": {"monthly_income": 2200, "fixed_bills": 1100, "savings": 500},
+      "purchases": [
+        {"merchant": "Starbucks", "amount": 6.75, "days_ago": 0},
+        {"merchant": "Uber", "amount": 14.20, "days_ago": 1},
+        {"merchant": "Whole Foods Market", "amount": 19.05, "days_ago": 1}
+      ]
+    }
+  ]
+}

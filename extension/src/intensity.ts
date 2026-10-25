@@ -35,7 +35,7 @@ export const INTENSITY_LEVELS: IntensityLevel[] = [
     selectedClass: 'border-amber-500/70 bg-amber-500/10',
     badgeClass: 'bg-amber-500/10 text-amber-300 ring-amber-500/40',
     description:
-      'Weighs the purchase against your daily budget, suggests alternatives, and requires a brief rationalization before unlocking checkout.',
+      'Weighs the purchase against your daily budget, suggests alternatives, and asks for a brief rationalization.',
   },
   {
     id: 'harsh',
@@ -46,7 +46,8 @@ export const INTENSITY_LEVELS: IntensityLevel[] = [
     selectedClass: 'border-red-500/70 bg-red-500/10',
     badgeClass: 'bg-red-500/10 text-red-300 ring-red-500/40',
     description:
-      'Maximum friction. Aggressively challenges impulse buys, calls out missed savings goals, and demands a robust defense.',
+      'Maximum friction. Aggressively challenges impulse buys, calls out missed savings goals, and demands a robust ' +
+      'defense. Puts orders that leave you stretched on hold until you decide.',
   },
 ]
 

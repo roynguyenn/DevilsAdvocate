@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import { SendHorizontal, X } from 'lucide-react'
 import { intensityLevel } from '../intensity'
 import { useInterceptorStore } from '../store'
-import SimulatedBuyButton from './SimulatedBuyButton'
+import DecisionBar from './DecisionBar'
 import TestModeBanner from './TestModeBanner'
 
 // The Agent Intervention mode the user picked in the popup (Light / Medium / Harsh), so they can see how hard the
@@ -101,7 +101,7 @@ export default function ChatPanel() {
         {isAgentTyping && <p className="pl-9 text-xs text-zinc-500">Thinking…</p>}
       </div>
 
-      <SimulatedBuyButton />
+      <DecisionBar />
       <form className="bg-panel p-4" onSubmit={submit}>
         <div className="flex items-end gap-2">
           <textarea

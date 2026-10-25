@@ -49,9 +49,10 @@ def test_simulated_purchase_updates_ledger_spent_and_next_score(bank):
     assert again["score_after"] < first["score_after"]
 
 
-def test_evaluate_never_sends_the_score_to_the_extension(bank):
+def test_extension_gets_the_score_but_the_wording_never_mentions_it(bank):
     body = client.post("/evaluate", json=HEADPHONES).json()
-    assert set(body) == {"action", "message", "snapshot"}
+    assert set(body) == {"action", "score_before", "score_after", "message", "snapshot"}
+    assert (body["score_before"], body["score_after"]) == (89, 62)
     assert "score" not in body["message"].lower()
 
 

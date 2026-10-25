@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { callServer } from './api'
+import { callServer, type DecisionOutcome } from './api'
 import { formatUsd } from './format'
 import type { Intensity, Settings } from './settings'
 
@@ -53,7 +53,7 @@ export interface Transaction {
 
 // Which data the server read (server/snapshot.py describe_source). Shown so developers know what they're testing.
 export type DataSource =
-  | { type: 'seed' }
+  | { type: 'manual' } // no bank linked: Finances tab + purchases made through the extension
   | { type: 'nessie'; customer_id: string; account_id: string; customer_name: string }
 
 // What the server's charts data looks like (server/app.py _snapshot_for_ui), all read from Nessie.
@@ -64,14 +64,18 @@ export interface ServerSnapshot {
   // Discretionary budget: income - fixed bills - savings.
   budget: number
   spent_this_month: number
-  balance: number
+  // null when no bank is linked.
+  balance: number | null
   transactions: Transaction[]
   source: DataSource
 }
 
-// Shape returned by the server's POST /evaluate. The score itself never leaves the server; only the verdict does.
+// Shape returned by the server's POST /evaluate. The score is a hidden heuristic: kept here for the overlay's
+// logic, never rendered, and never sent to Claude.
 export interface Evaluation {
   action: 'inform' | 'nudge' | 'block'
+  score_before: number
+  score_after: number
   message: string
   snapshot: ServerSnapshot
 }
@@ -125,7 +129,10 @@ interface InterceptorState {
   isAgentTyping: boolean
   // Set when the server wraps the chat up. The reply cap lives only on the server and is never shown.
   chatClosed: boolean
-  purchaseState: 'idle' | 'saving' | 'done'
+  // One decision-log entry per checkout: bought, or left_checkout (left without buying; may still be deciding).
+  decisionLogged: boolean
+  // Shown briefly after the overlay is gone, e.g. "Logged $24.99 as a purchase. Nothing was ordered."
+  notice: string | null
   // Mirrors the popup's Testing switch (settings.ts) so the overlay can say no order will be placed.
   testMode: boolean
 
@@ -138,11 +145,15 @@ interface InterceptorState {
   failEvaluation: (key: string) => void
   pushMessage: (role: ChatMessage['role'], content: string) => void
   sendChat: (text: string) => Promise<void>
-  simulatePurchase: () => Promise<void>
+  confirmPurchase: () => Promise<void>
+  showNotice: (text: string) => void
+  logDecision: (outcome: DecisionOutcome) => void
   close: () => void
 }
 
 const makeId = () => Math.random().toString(36).slice(2, 10)
+
+const NOTICE_MS = 4000
 
 const CLOSING_LINE: Record<Intensity, string> = {
   light: 'Are you sure you want this?',
@@ -174,7 +185,8 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   evaluation: null,
   isAgentTyping: false,
   chatClosed: false,
-  purchaseState: 'idle',
+  decisionLogged: false,
+  notice: null,
   testMode: true,
 
   setTestMode: (testMode) => set({ testMode }),
@@ -195,7 +207,8 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
       financesError: cart.total === null ? 'No price to score.' : null,
       isAgentTyping: false,
       chatClosed: false,
-      purchaseState: 'idle',
+      decisionLogged: false,
+      notice: null,
       chatHistory: [
         {
           id: makeId(),
@@ -249,29 +262,30 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
     })
   },
 
-  // SIMULATED: logs the purchase on the server so the ledger and next score reflect it. The checkout click
-  // stays blocked, so no Amazon order is placed.
-  simulatePurchase: async () => {
-    const { evaluation, purchaseState, cart, cartTotal, sessionKey, pushMessage } = get()
-    if (!evaluation || cartTotal === null || purchaseState !== 'idle') return
-    set({ purchaseState: 'saving' })
+  // The student closed the overlay and clicked Place your order again for the same cart: that's their decision
+  // to buy. The purchase is recorded (Nessie or the Finances-tab log) and logged as "bought". In testing mode the
+  // content script has already blocked the click, so nothing is ordered; in Live mode the click went on to Amazon.
+  confirmPurchase: async () => {
+    const { evaluation, decisionLogged, cart, cartTotal, testMode } = get()
+    if (!evaluation || decisionLogged || cartTotal === null) return
+    get().logDecision('bought')
     try {
       const res = await callServer<{ snapshot: ServerSnapshot }>({
         type: 'purchase',
-        purchase: { title: cartTitle(cart), price: cartTotal },
+        purchase: { title: cartTitle(cart), price: cartTotal, simulated: testMode },
       })
-      if (get().sessionKey !== sessionKey) return
-      set({ finances: fromSnapshot(res.snapshot), dataSource: res.snapshot.source, purchaseState: 'done' })
-      pushMessage(
-        'agent',
-        `Logged ${formatUsd(cartTotal)} as a simulated purchase. No order was placed. ` +
-          'It now counts toward your spending, so your next check starts from here.',
-      )
+      set({ finances: fromSnapshot(res.snapshot), dataSource: res.snapshot.source })
+      if (testMode) get().showNotice(`Logged ${formatUsd(cartTotal)} as a purchase. Nothing was ordered (testing mode).`)
     } catch {
-      if (get().sessionKey !== sessionKey) return
-      set({ purchaseState: 'idle' })
-      pushMessage('agent', "I couldn't reach the server, so nothing was logged.")
+      get().showNotice("Couldn't reach the server, so this purchase wasn't added to your transactions.")
     }
+  },
+
+  showNotice: (text) => {
+    set({ notice: text })
+    setTimeout(() => {
+      if (get().notice === text) set({ notice: null })
+    }, NOTICE_MS)
   },
 
   pushMessage: (role, content) =>
@@ -306,6 +320,21 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
     }
   },
 
-  // Only hides the overlay: the conversation stays so clicking the order button again resumes it.
-  close: () => set({ isOpen: false }),
+  // Fire-and-forget: the server summarizes the chat (Claude) into a 1-2 line memory for next time.
+  logDecision: (outcome) => {
+    const { evaluation, decisionLogged, cart, cartTotal, chatHistory } = get()
+    if (!evaluation || decisionLogged || cartTotal === null) return
+    set({ decisionLogged: true })
+    const history = chatHistory.slice(-20).map((m) => ({
+      role: m.role === 'agent' ? ('assistant' as const) : ('user' as const),
+      content: m.content,
+    }))
+    callServer({ type: 'decision', purchase: { title: cartTitle(cart), price: cartTotal }, history, outcome }).catch(
+      (err: Error) => console.warn('[devils-advocate] decision not logged:', err.message),
+    )
+  },
+
+  // Closing just returns to the checkout page; the decision is still open. Clicking Place your order again buys
+  // (confirmPurchase); leaving the page or checking out a different cart logs "left_checkout" (content.tsx).
+  close: () => set({ isOpen: false, verdictStatus: 'idle' }),
 }))

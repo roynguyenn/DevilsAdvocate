@@ -1,5 +1,6 @@
 import { ArrowDownLeft, CheckCircle2, Landmark, Lock, ShoppingBag, type LucideIcon } from 'lucide-react'
 import { usePopupStore } from '../store'
+import CustomerPicker from './CustomerPicker'
 
 interface Props {
   onConnect: () => void
@@ -17,9 +18,17 @@ export default function AccountCard({ onConnect }: Props) {
   return (
     <section className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-panel p-4" aria-labelledby="account-title">
       <div>
-        <h2 id="account-title" className="text-sm font-semibold text-zinc-100">Account Connection</h2>
-        <p className="text-xs text-zinc-400">The agent reads your real bank account spending.</p>
+        <h2 id="account-title" className="text-sm font-semibold text-zinc-100">
+          Account Connection <span className="font-normal text-zinc-500">(optional)</span>
+        </h2>
+        <p className="text-xs text-zinc-400">
+          {account
+            ? 'The agent reads your real bank account spending.'
+            : 'Skip this to use only your Finances tab: purchases are judged against your budget, without your balance or bank history.'}
+        </p>
       </div>
+
+      <CustomerPicker />
 
       {account ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2.5">

@@ -35,7 +35,8 @@ def test_penalty_lowers_score():
     ],
 )
 def test_decide(before, after, mode, floor, blocks, expected):
-    assert score.decide(before, after, mode, floor, blocks)["action"] == expected
+    rules = score.rules_from_settings({"mode": mode, "floor": floor})
+    assert score.decide(before, after, rules, blocks)["action"] == expected
 
 
 def test_evaluate_end_to_end():

@@ -20,13 +20,21 @@ function toRoute(msg: ServerRequest): Route {
     case 'accounts':
       return { method: 'GET', path: '/accounts' }
     case 'getProfile':
-      return { method: 'GET', path: `/profile?account_id=${encodeURIComponent(msg.accountId)}` }
+      return { method: 'GET', path: msg.accountId ? `/profile?account_id=${encodeURIComponent(msg.accountId)}` : '/profile' }
     case 'saveProfile':
       return { method: 'PUT', path: '/profile', body: msg.profile }
+    case 'customers':
+      return { method: 'GET', path: '/customers' }
+    case 'selectCustomer':
+      return { method: 'PUT', path: '/customer', body: { customer_id: msg.customerId } }
+    case 'decision':
+      return { method: 'POST', path: '/decision', body: { purchase: msg.purchase, history: msg.history, outcome: msg.outcome } }
   }
 }
 
-const KNOWN_TYPES = new Set<ServerRequest['type']>(['evaluate', 'chat', 'purchase', 'accounts', 'getProfile', 'saveProfile'])
+const KNOWN_TYPES = new Set<ServerRequest['type']>([
+  'evaluate', 'chat', 'purchase', 'accounts', 'getProfile', 'saveProfile', 'customers', 'selectCustomer', 'decision',
+])
 
 // FastAPI puts a human-readable reason in `detail` (a string for our own errors, a list for validation errors).
 async function errorMessage(r: Response): Promise<string> {
