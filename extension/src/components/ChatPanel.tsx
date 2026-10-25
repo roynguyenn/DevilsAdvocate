@@ -28,6 +28,7 @@ export default function ChatPanel() {
   const chatHistory = useInterceptorStore((s) => s.chatHistory)
   const close = useInterceptorStore((s) => s.close)
   const hasEvaluation = useInterceptorStore((s) => s.evaluation !== null)
+  const hasPrice = useInterceptorStore((s) => s.cartItemPrice !== null)
   const isAgentTyping = useInterceptorStore((s) => s.isAgentTyping)
   const sendChat = useInterceptorStore((s) => s.sendChat)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -35,11 +36,13 @@ export default function ChatPanel() {
 
   const turnsLeft = MAX_USER_TURNS - chatHistory.filter((m) => m.role === 'user').length
   const canSend = hasEvaluation && !isAgentTyping && turnsLeft > 0
-  const placeholder = !hasEvaluation
-    ? 'Waiting for the server…'
-    : turnsLeft > 0
-      ? `Ask about this purchase (${turnsLeft} ${turnsLeft === 1 ? 'reply' : 'replies'} left)`
-      : 'Chat limit reached. The choice is yours.'
+  const placeholder = !hasPrice
+    ? 'No price to score, so there is nothing to discuss.'
+    : !hasEvaluation
+      ? 'Waiting for the server…'
+      : turnsLeft > 0
+        ? `Ask about this purchase (${turnsLeft} ${turnsLeft === 1 ? 'reply' : 'replies'} left)`
+        : 'Chat limit reached. The choice is yours.'
 
   const submit = (e: FormEvent | KeyboardEvent) => {
     e.preventDefault()

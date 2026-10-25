@@ -12,14 +12,18 @@ export default function ConnectBankModal({ onClose, onLinked }: Props) {
   const [accounts, setAccounts] = useState<LinkedAccount[] | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [authorizing, setAuthorizing] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    fetchAuthorizableAccounts().then((list) => {
-      if (cancelled) return
-      setAccounts(list)
-      setSelectedId(list[0]?.id ?? null)
-    })
+    fetchAuthorizableAccounts().then(
+      (list) => {
+        if (cancelled) return
+        setAccounts(list)
+        setSelectedId(list[0]?.id ?? null)
+      },
+      () => !cancelled && setLoadError("Couldn't reach the Devil's Advocate server. Is it running on port 3001?"),
+    )
     return () => {
       cancelled = true
     }
@@ -64,7 +68,11 @@ export default function ConnectBankModal({ onClose, onLinked }: Props) {
 
         <div className="flex flex-col gap-3 p-4">
           <p className="text-xs text-zinc-400">Choose the account Devil's Advocate may read transactions from.</p>
-          {accounts === null ? (
+          {loadError ? (
+            <p className="rounded-lg border border-red-900/60 bg-red-950/50 px-3 py-2 text-xs text-red-300" role="alert">
+              {loadError}
+            </p>
+          ) : accounts === null ? (
             <div className="flex items-center justify-center gap-2 py-6 text-sm text-zinc-400">
               <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden /> Loading accounts…
             </div>

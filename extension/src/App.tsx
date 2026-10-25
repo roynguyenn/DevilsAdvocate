@@ -40,7 +40,11 @@ function DataPanel() {
           <ItemThumbnail />
           <div className="min-w-0">
             <p className="line-clamp-2 text-sm font-medium text-zinc-100">{name}</p>
-            <p className="mt-0.5 text-lg font-semibold tabular-nums text-zinc-100">{formatUsd(price)}</p>
+            {price === null ? (
+              <p className="mt-0.5 text-sm text-zinc-400">Price not found on this page</p>
+            ) : (
+              <p className="mt-0.5 text-lg font-semibold tabular-nums text-zinc-100">{formatUsd(price)}</p>
+            )}
           </div>
         </div>
         <div className="border-t border-zinc-800 pt-4">
