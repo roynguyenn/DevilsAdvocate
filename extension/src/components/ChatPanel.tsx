@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { CheckCircle2, Flame, Scale, SendHorizontal, ShieldX, X } from 'lucide-react'
 import { useInterceptorStore, type VerdictStatus } from '../store'
 import SimulatedBuyButton from './SimulatedBuyButton'
+import TestModeBanner from './TestModeBanner'
 
 const BADGES: Record<VerdictStatus, { label: string; className: string; Icon: typeof Scale } | null> = {
   idle: null,
@@ -70,6 +71,7 @@ export default function ChatPanel() {
           <X className="h-4 w-4" />
         </button>
       </header>
+      <TestModeBanner />
 
       <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
         {chatHistory.map((m) => (

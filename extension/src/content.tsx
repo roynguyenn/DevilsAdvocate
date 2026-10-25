@@ -2,7 +2,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App'
 import { callServer } from './api'
 import styles from './index.css?inline'
-import { loadSettings, onSettingsChanged, type Settings } from './settings'
+import { loadSettings, loadTestMode, onSettingsChanged, onTestModeChanged, type Settings } from './settings'
 import { useInterceptorStore, type Evaluation, type InterceptedItem } from './store'
 
 const HOST_ID = 'devils-advocate-host'
@@ -77,14 +77,40 @@ function scrapeCheckout(): InterceptedItem {
 
 // null until chrome.storage answers. Treated as active so a click during startup is still caught (fail closed).
 let interceptorActive: boolean | null = null
+// Starts true for the same reason: until storage says otherwise, assume we're testing and block orders.
+let testMode = true
+
+// Testing mode also catches order buttons CHECKOUT_SELECTORS misses, matched by their visible label, so a
+// changed Amazon layout can't slip a real order through while developing.
+const ORDER_LABEL = /\b(place (your )?order|buy now|submit (your )?order|complete (your )?(order|purchase)|pay now)\b/i
+const CLICKABLE = 'button, input[type="submit"], input[type="button"], [role="button"], a'
+
+function looksLikeOrderControl(el: Element | null): boolean {
+  const control = el?.closest?.(CLICKABLE)
+  if (!control) return false
+  // Amazon's button text is full of newlines and runs of spaces ("Place\n   your order"); collapse them first.
+  const label = [control.textContent, control.getAttribute('value'), control.getAttribute('aria-label')]
+    .join(' ')
+    .replace(/\s+/g, ' ')
+  return ORDER_LABEL.test(label)
+}
+
+const isOrderControl = (el: Element | null) =>
+  Boolean(el?.closest?.(CHECKOUT_SELECTORS)) || (testMode && looksLikeOrderControl(el))
 
 function applySettings(settings: Settings) {
   interceptorActive = settings.active
   if (settings.active) useInterceptorStore.getState().applySettings(settings)
 }
 
+function applyTestMode(on: boolean) {
+  testMode = on
+  useInterceptorStore.getState().setTestMode(on)
+}
+
 function intercept(e: Event) {
-  if (interceptorActive === false) return
+  // A paused interceptor lets orders through, except in testing mode, where nothing is ever ordered.
+  if (interceptorActive === false && !testMode) return
   e.preventDefault()
   e.stopImmediatePropagation()
   const item = scrapeCheckout()
@@ -102,13 +128,16 @@ function requestEvaluation(item: InterceptedItem) {
 // Capture-phase delegation on window: runs before Amazon's own handlers and survives the
 // button being re-rendered (address/payment changes swap out the checkout DOM).
 function onClick(e: MouseEvent) {
-  const target = e.target as Element | null
-  if (target?.closest?.(CHECKOUT_SELECTORS)) intercept(e)
+  if (isOrderControl(e.target as Element | null)) intercept(e)
 }
 
-// Catches keyboard submission (Enter) of the order form, which never fires a click on the button.
+// Catches keyboard submission (Enter) of the order form, which never fires a click on the button. A submit with
+// no submitter (form.submit() from script) is caught in testing mode if the form holds an order button.
 function onSubmit(e: SubmitEvent) {
-  if (e.submitter?.closest(CHECKOUT_SELECTORS)) intercept(e)
+  const form = e.target as HTMLFormElement | null
+  const formHasOrderButton = Boolean(form?.querySelector?.(CHECKOUT_SELECTORS)) ||
+    Array.from(form?.querySelectorAll?.(CLICKABLE) ?? []).some((el) => looksLikeOrderControl(el))
+  if (isOrderControl(e.submitter) || (testMode && !e.submitter && formHasOrderButton)) intercept(e)
 }
 
 function init() {
@@ -117,6 +146,8 @@ function init() {
     interceptorActive = true
   })
   onSettingsChanged(applySettings)
+  loadTestMode().then(applyTestMode, () => applyTestMode(true))
+  onTestModeChanged(applyTestMode)
   mountOverlay()
   window.addEventListener('click', onClick, true)
   window.addEventListener('submit', onSubmit, true)

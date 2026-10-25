@@ -6,6 +6,7 @@ import BaselineCard from './components/BaselineCard'
 import ConnectBankModal from './components/ConnectBankModal'
 import EnableSwitch from './components/EnableSwitch'
 import InterventionCard from './components/InterventionCard'
+import TestModeSwitch from './components/TestModeSwitch'
 import { selectCanEnable, selectIsDirty, selectSaveBlocker, selectSectionComplete, usePopupStore, type Section } from './store'
 
 const SECTIONS: { id: Section; label: string; Icon: LucideIcon }[] = [
@@ -138,7 +139,10 @@ export default function Popup() {
           <h1 className="text-base font-semibold text-white">Devil's Advocate Configuration</h1>
           <p className="mt-0.5 text-[11px] text-zinc-400">Establish your financial baseline so the agent can keep you honest.</p>
         </div>
-        <EnableSwitch />
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <EnableSwitch />
+          <TestModeSwitch />
+        </div>
       </header>
 
       {status === 'loading' ? (

@@ -51,6 +51,12 @@ export interface Evaluation {
   snapshot: ServerSnapshot
 }
 
+const VERDICT_FOR_ACTION: Record<Evaluation['action'], VerdictStatus> = {
+  inform: 'approved',
+  nudge: 'negotiating',
+  block: 'blocked',
+}
+
 const fromSnapshot = (s: ServerSnapshot) => ({
   totalBudget: s.budget,
   spent: s.spent_this_month,
@@ -84,8 +90,11 @@ interface InterceptorState {
   // Set when the server wraps the chat up. The reply cap lives only on the server and is never shown.
   chatClosed: boolean
   purchaseState: 'idle' | 'saving' | 'done'
+  // Mirrors the popup's Testing switch (settings.ts) so the overlay can say no order will be placed.
+  testMode: boolean
 
   applySettings: (settings: Settings) => void
+  setTestMode: (on: boolean) => void
   openIntercept: (item: InterceptedItem) => void
   applyEvaluation: (e: Evaluation) => void
   pushMessage: (role: ChatMessage['role'], content: string) => void
@@ -154,6 +163,9 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   isAgentTyping: false,
   chatClosed: false,
   purchaseState: 'idle',
+  testMode: true,
+
+  setTestMode: (testMode) => set({ testMode }),
 
   applySettings: (settings) =>
     set({
@@ -184,7 +196,8 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
     set({
       ...fromSnapshot(e.snapshot),
       evaluation: e,
-      verdictStatus: e.action === 'block' ? 'blocked' : 'negotiating',
+      // Under the threshold ('inform') the overlay still opens, but as a green light rather than a debate.
+      verdictStatus: VERDICT_FOR_ACTION[e.action],
       // The score stays internal (it only decides the verdict); the user sees the explanation alone.
       chatHistory: [{ id: makeId(), role: 'agent', content: e.message }],
     }),

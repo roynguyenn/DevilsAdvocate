@@ -74,6 +74,14 @@ def test_llm_never_sees_the_score_or_floor():
     assert pub["action"] == "block" and pub["balance_after"] == 1220
 
 
+def test_under_threshold_template_says_fine_to_buy():
+    snapshot = {"balance": 1400, "bills_14d": 700, "spent_this_month": 150}
+    state = {"settings": {"budget": 400, "buffer_target": 300, "mode": "aware", "floor": 70}}
+    facts = score.evaluate(snapshot, {"price": 20}, state)
+    assert facts["action"] == "inform"
+    assert llm.template_message(llm.public_facts(facts)).startswith("You're fine to buy this if you'd like.")
+
+
 def test_replies_mentioning_internals_are_rejected():
     assert llm.mentions_internals("Your score drops below the floor.")
     assert llm.mentions_internals("That falls under the threshold")

@@ -34,7 +34,8 @@ _RULES = (
 
 _VERDICTS = (
     "The facts include an action: "
-    "'inform' means the purchase is fine to make; give a short, neutral heads-up about what it leaves them with. "
+    "'inform' means they're in good shape for this purchase: open by telling them they're fine to buy it if "
+    "they'd like, then add one short note on what it leaves them with. Don't talk them out of it. "
     "'nudge' means it's a stretch; name the main pressure (bills or budget) and suggest sleeping on it for a day. "
     "'block' means this order is on hold; say so plainly, name the main pressure, and end with one short question "
     "asking what they'd commit to doing with the item if they still want it. "
@@ -75,6 +76,8 @@ def template_message(facts: dict) -> str:
         f"This leaves ${facts['budget_left_after']:g} in your monthly budget, with ${facts['bills_14d']:g} "
         f"in bills due in the next {facts['bills_window_days']} days."
     )
+    if facts["action"] == "inform":
+        return "You're fine to buy this if you'd like. " + msg
     if facts["action"] == "nudge":
         msg += " It might be worth sleeping on it for a day."
     elif facts["action"] == "block":

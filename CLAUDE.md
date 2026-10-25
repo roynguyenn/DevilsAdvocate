@@ -42,7 +42,8 @@
         *   **Recent Ledger (Transaction History) card:** scrollable list of recent Nessie purchases: category icon avatar, merchant + relative time, right-aligned negative amount. It fills the remaining panel height.
         *   *Not yet built:* Recharts bar chart of income vs. monthly spending pacing; a score gauge.
     *   **Right Panel (Agent/Chat):**
-        *   Pinned verdict badge at the top: `[ Negotiating ]`, `[ Blocked ]`, or `[ Approved ]`. `Blocked` is set only when `/evaluate` returns `action: "block"`.
+        *   Pinned verdict badge at the top, mapped from `/evaluate`'s action: `inform` → `[ Approved ]` (under the threshold: the overlay still opens, but says they're fine to buy it), `nudge` → `[ Negotiating ]`, `block` → `[ Blocked ]`.
+        *   Testing-mode banner under the header (`TestModeBanner`) while testing mode is on.
         *   Chat window. The first agent message is Claude's explanation (money only, no score; Rule 5). Replies arrive whole (not streamed). Agent bubbles are amber-tinted; user bubbles are zinc.
         *   User input: enabled once `evaluation` is set, disabled while the agent is replying, and closed (`chatClosed`, placeholder "Time to decide.") when `/chat` returns `done: true`. **The reply cap is hidden:** the extension doesn't know or show it, so there's no countdown to bargain against. Enter sends, Shift+Enter adds a newline. Sending goes through the store action `sendChat`.
         *   **"Buy anyway (simulated)"** (`SimulatedBuyButton`, store action `simulatePurchase`): logs the item as a fake purchase via `POST /purchase`, then updates the ledger and spent from the returned snapshot. The checkout click stays blocked, so no Amazon order is placed. One click per intercept.
@@ -58,6 +59,7 @@
     *   **Validation:** math is done in whole cents. Over-allocation shows a hatched red tail on the bar and blocks saving.
 *   **Agent Intervention:** a three-card radiogroup: Light / The Gentle Nudge (yellow caution icon), Medium / The Negotiator (amber scales, default), Harsh / The Interrogator (red flame). Harsh's cooling-off rule comes from `HARSH_COOLDOWN` in `src/settings.ts` (5 minutes, over 10% of the budget). The intensity currently only changes the mock opening line; the real prompt and cooldown behavior arrive with the backend.
 *   **Save bar:** "Save & Activate Interceptor" stays disabled, with the reason shown underneath, until a bank is linked and the split equals 100% of a positive income. After activation the button reads "Save Changes" and is only enabled when something has changed.
+*   **Testing / Live switch** (`TestModeSwitch`, under the Enabled switch): stored as its own `testMode` key in `chrome.storage.local` (not part of `Settings`, so it's never an unsaved edit), **default ON**. While on, the content script blocks every order click on checkout pages, even with the interceptor disabled or setup unfinished, and also catches order buttons that `CHECKOUT_SELECTORS` misses by their label (`ORDER_LABEL`: place order, buy now, submit/complete order, pay now; whitespace-collapsed). Nothing can be ordered. Turn it to Live only on purpose.
 *   **Enabled/Disabled switch:** pauses the interceptor without uninstalling the extension or losing settings. It flips only the persisted `settings.active` (unsaved draft edits are untouched), and open checkout tabs pick up the change live.
     *   **Disabling** requires confirming in a dialog ("Keep it on" is the focused default). This is deliberate friction: turning it off is the easy escape for an impulse buyer.
     *   **Enabling** is immediate.
@@ -112,7 +114,7 @@
 *   **Aware** (default, never blocks): drop ≥ 15 points or `score_after < 50` → `nudge`; otherwise `inform`.
 *   The user can always override.
 
-**Step 3: Claude wording (`llm.explain`).** Persona: a blunt but kind friend at checkout. Gets `public_facts` only, writes 2–3 plain sentences about bills, budget and balance: `inform` = neutral heads-up, `nudge` = suggest sleeping on it, `block` = "this order is on hold" + one commitment question. Number guard, internals guard, template fallback (Rules 4–5).
+**Step 3: Claude wording (`llm.explain`).** Persona: a blunt but kind friend at checkout. Gets `public_facts` only, writes 2–3 plain sentences about bills, budget and balance: `inform` = "you're fine to buy this if you'd like" + one note on what it leaves, `nudge` = suggest sleeping on it, `block` = "this order is on hold" + one commitment question. Number guard, internals guard, template fallback (Rules 4–5).
 
 **Step 4: Chat (`llm.chat`, `POST /chat`).**
 *   Answers questions about this purchase in 1–3 sentences using the facts. It cannot approve, unblock or change the score, and says so when asked. It can't verify claims about how the item will be used.
@@ -220,6 +222,7 @@ Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/
 ## 8. Guardrails (Do / Don't)
 
 ### Safety: real money is at stake
+*   **Keep the popup on Testing (the default) while developing and demoing.** It blocks order clicks even when a selector misses or the interceptor is paused. It cannot help if the content script never loads (wrong URL pattern, extension not reloaded), so the checks below still apply.
 *   **Testing on live Amazon can place a real order.** If the content script fails to load or a selector misses, the click goes through. Before clicking "Place your order" on a live checkout, confirm that (1) the popup's switch shows **Enabled**, (2) `document.getElementById('devils-advocate-host')` exists in DevTools, and (3) the button matches `CHECKOUT_SELECTORS`. An inactive interceptor deliberately lets the order through. Prefer the mocked-page test (below) for every change. Turn off 1-Click on the demo account.
 *   Interception must **fail closed on recognized buttons**: call `preventDefault()` and `stopImmediatePropagation()` *before* any async work, scraping, or code that could throw. If the server is down, the overlay keeps the mock message and the lock still holds.
 *   Intercept with **capture-phase listeners on `window`** (`click` and `submit`) using `closest()` delegation, not listeners attached to the button. Amazon re-renders the checkout DOM (address/payment changes) and runs its own handlers on the button.
