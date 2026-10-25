@@ -144,7 +144,7 @@
 
 **Step 5: Follow-up loop (planned).** Commitments with a follow-up date; answers "used / returned / unused" adjust `regret_penalty` (+5 per returned/unused, max 15; −3 per used, min 0). "Saved" money counts only if a blocked/abandoned purchase isn't bought within 7 days; in the demo that time-skip is SIMULATED and labeled.
 
-**Step 6: Decision memory.** Every finished checkout is logged per customer: the overlay sends `bought` when "Buy it/anyway (simulated)" succeeds and `walked_away` when it's closed without buying (`logDecision`, once per checkout). Claude summarizes the chat into 1-2 lines with the outcome and the student's reason. On a later checkout of a similar item, those lines go to Claude as `past_decisions`, so it can say e.g. "last time you walked away from these until after rent". Same guards as all LLM text (numbers, internals).
+**Step 6: Decision memory.** Every finished checkout is logged per customer: `bought` when the student closes the overlay and clicks Place your order again for the same cart (`confirmPurchase`), `walked_away` when they check out a different cart or leave the page (`logDecision`, once per checkout). Claude summarizes the chat into 1-2 lines with the outcome and the student's reason. On a later checkout of a similar item, those lines go to Claude as `past_decisions`, so it can say e.g. "last time you walked away from these until after rent". Same guards as all LLM text (numbers, internals).
 
 ---
 
