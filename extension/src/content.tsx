@@ -1,7 +1,8 @@
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { callServer } from './api'
 import styles from './index.css?inline'
-import { useInterceptorStore, type InterceptedItem } from './store'
+import { useInterceptorStore, type Evaluation, type InterceptedItem } from './store'
 
 const HOST_ID = 'devils-advocate-host'
 
@@ -66,7 +67,16 @@ function scrapeCheckout(): InterceptedItem {
 function intercept(e: Event) {
   e.preventDefault()
   e.stopImmediatePropagation()
-  useInterceptorStore.getState().openIntercept(scrapeCheckout())
+  const item = scrapeCheckout()
+  useInterceptorStore.getState().openIntercept(item)
+  requestEvaluation(item)
+}
+
+// If the server is down the overlay keeps the mock message, so the lock still holds.
+function requestEvaluation(item: InterceptedItem) {
+  callServer<Evaluation>({ type: 'evaluate', purchase: { title: item.name, price: item.price } })
+    .then((e) => useInterceptorStore.getState().applyEvaluation(e))
+    .catch((err: Error) => console.warn('[devils-advocate] evaluate failed:', err.message))
 }
 
 // Capture-phase delegation on window: runs before Amazon's own handlers and survives the

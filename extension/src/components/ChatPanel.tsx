@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { motion } from 'framer-motion'
 import { Bot, CheckCircle2, Scale, SendHorizontal, ShieldX, X } from 'lucide-react'
-import { useInterceptorStore, type VerdictStatus } from '../store'
+import { MAX_USER_TURNS, useInterceptorStore, type VerdictStatus } from '../store'
 
 const BADGES: Record<VerdictStatus, { label: string; className: string; Icon: typeof Scale } | null> = {
   idle: null,
@@ -26,11 +26,31 @@ function VerdictBadge() {
 export default function ChatPanel() {
   const chatHistory = useInterceptorStore((s) => s.chatHistory)
   const close = useInterceptorStore((s) => s.close)
+  const hasEvaluation = useInterceptorStore((s) => s.evaluation !== null)
+  const isAgentTyping = useInterceptorStore((s) => s.isAgentTyping)
+  const sendChat = useInterceptorStore((s) => s.sendChat)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [draft, setDraft] = useState('')
+
+  const turnsLeft = MAX_USER_TURNS - chatHistory.filter((m) => m.role === 'user').length
+  const canSend = hasEvaluation && !isAgentTyping && turnsLeft > 0
+  const placeholder = !hasEvaluation
+    ? 'Waiting for the server…'
+    : turnsLeft > 0
+      ? `Ask about this purchase (${turnsLeft} ${turnsLeft === 1 ? 'reply' : 'replies'} left)`
+      : 'Chat limit reached. The choice is yours.'
+
+  const submit = (e: FormEvent | KeyboardEvent) => {
+    e.preventDefault()
+    const text = draft.trim()
+    if (!canSend || !text) return
+    setDraft('')
+    void sendChat(text)
+  }
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [chatHistory])
+  }, [chatHistory, isAgentTyping])
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -72,19 +92,26 @@ export default function ChatPanel() {
             </p>
           </motion.div>
         ))}
+        {isAgentTyping && <p className="pl-9 text-xs text-neutral-500">Thinking…</p>}
       </div>
 
-      <form className="border-t border-neutral-200 p-4" onSubmit={(e) => e.preventDefault()}>
+      <form className="border-t border-neutral-200 p-4" onSubmit={submit}>
         <div className="flex items-end gap-2">
           <textarea
-            disabled
+            disabled={!canSend}
             rows={2}
-            placeholder="Negotiation opens once the agent is connected…"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) submit(e)
+            }}
+            placeholder={placeholder}
+            maxLength={2000}
             className="flex-1 resize-none rounded-lg border border-neutral-300 bg-neutral-50 px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 disabled:cursor-not-allowed"
           />
           <button
             type="submit"
-            disabled
+            disabled={!canSend || !draft.trim()}
             className="rounded-lg bg-neutral-900 p-2.5 text-white disabled:cursor-not-allowed disabled:opacity-40"
             aria-label="Send"
           >

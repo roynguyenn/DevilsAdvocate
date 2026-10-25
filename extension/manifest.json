@@ -8,8 +8,13 @@
   ],
   "host_permissions": [
     "https://www.amazon.com/checkout/*",
-    "https://www.amazon.com/gp/buy/spc/handlers/display.html*"
+    "https://www.amazon.com/gp/buy/spc/handlers/display.html*",
+    "http://localhost:3001/*"
   ],
+  "background": {
+    "service_worker": "src/background.ts",
+    "type": "module"
+  },
   "content_scripts": [
     {
       "matches": [

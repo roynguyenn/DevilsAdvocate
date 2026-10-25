@@ -1,0 +1,6 @@
+{
+  "_note": "Fake demo data. Matches the brief's worked example: $180 item scores 89 -> 62.",
+  "balance": 1400,
+  "bills_14d": 700,
+  "spent_this_month": 150
+}

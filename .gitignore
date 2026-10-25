@@ -1,0 +1,10 @@
+.env
+node_modules
+__pycache__
+.venv
+.pytest_cache
+server/data/state.json
+server/data/commitments.json
+server/.env
+extension/dist
+dist
