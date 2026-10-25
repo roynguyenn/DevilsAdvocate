@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 
 import { motion } from 'framer-motion'
 import { CheckCircle2, Flame, Scale, SendHorizontal, ShieldX, X } from 'lucide-react'
 import { useInterceptorStore, type VerdictStatus } from '../store'
-import SimulatedBuyButton from './SimulatedBuyButton'
+import DecisionBar from './DecisionBar'
 import TestModeBanner from './TestModeBanner'
 
 const BADGES: Record<VerdictStatus, { label: string; className: string; Icon: typeof Scale } | null> = {
@@ -104,7 +104,7 @@ export default function ChatPanel() {
         {isAgentTyping && <p className="pl-9 text-xs text-zinc-500">Thinking…</p>}
       </div>
 
-      <SimulatedBuyButton />
+      <DecisionBar />
       <form className="bg-panel p-4" onSubmit={submit}>
         <div className="flex items-end gap-2">
           <textarea

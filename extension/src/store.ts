@@ -132,7 +132,11 @@ interface InterceptorState {
   failEvaluation: () => void
   pushMessage: (role: ChatMessage['role'], content: string) => void
   sendChat: (text: string) => Promise<void>
-  simulatePurchase: () => Promise<void>
+  buy: () => Promise<void>
+  // Set by the content script: replays the intercepted order click once. Returns false in testing mode or if
+  // the button is gone.
+  releaseCheckout: (() => boolean) | null
+  setReleaseCheckout: (release: () => boolean) => void
   logDecision: (outcome: DecisionOutcome) => void
   close: () => void
 }
@@ -227,27 +231,47 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
 
   // SIMULATED: logs the purchase on the server so the ledger and next score reflect it. The checkout click
   // stays blocked, so no Amazon order is placed.
-  simulatePurchase: async () => {
-    const { evaluation, purchaseState, cart, cartTotal, pushMessage } = get()
+  // The student decided to buy. The purchase is recorded in Nessie (so the next check reflects it) and logged as
+  // "bought". Testing mode stops there: nothing is ordered. In Live mode the original Place Order click is then
+  // released to Amazon, even if the server is unreachable: the choice is always theirs.
+  buy: async () => {
+    const { evaluation, purchaseState, cart, cartTotal, testMode, pushMessage } = get()
     if (!evaluation || cartTotal === null || purchaseState !== 'idle') return
     set({ purchaseState: 'saving' })
+    let recorded = true
     try {
       const res = await callServer<{ snapshot: ServerSnapshot }>({
         type: 'purchase',
-        purchase: { title: cartTitle(cart), price: cartTotal },
+        purchase: { title: cartTitle(cart), price: cartTotal, simulated: testMode },
       })
-      set({ finances: fromSnapshot(res.snapshot), dataSource: res.snapshot.source, purchaseState: 'done' })
-      get().logDecision('bought')
+      set({ finances: fromSnapshot(res.snapshot), dataSource: res.snapshot.source })
+    } catch {
+      recorded = false
+    }
+    get().logDecision('bought')
+
+    if (testMode) {
+      set({ purchaseState: recorded ? 'done' : 'idle' })
       pushMessage(
         'agent',
-        `Logged ${formatUsd(cartTotal)} as a simulated purchase. No order was placed. ` +
-          'It now counts toward your spending, so your next check starts from here.',
+        recorded
+          ? `Logged ${formatUsd(cartTotal)} as a simulated purchase. No order was placed. ` +
+              'It now counts toward your spending, so your next check starts from here.'
+          : "I couldn't reach the server, so nothing was logged.",
       )
-    } catch {
+      return
+    }
+
+    if (get().releaseCheckout?.()) {
+      set({ purchaseState: 'done', isOpen: false, verdictStatus: 'idle' })
+    } else {
       set({ purchaseState: 'idle' })
-      pushMessage('agent', "I couldn't reach the server, so nothing was logged.")
+      pushMessage('agent', "I couldn't find the order button on the page anymore. Close this and click Place your order again.")
     }
   },
+
+  releaseCheckout: null,
+  setReleaseCheckout: (releaseCheckout) => set({ releaseCheckout }),
 
   pushMessage: (role, content) =>
     set((s) => ({ chatHistory: [...s.chatHistory, { id: makeId(), role, content }] })),

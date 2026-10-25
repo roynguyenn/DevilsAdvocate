@@ -265,11 +265,39 @@ function applyTestMode(on: boolean) {
   useInterceptorStore.getState().setTestMode(on)
 }
 
-function intercept(e: Event) {
+// What was intercepted, so "Buy it" can replay exactly that click or submit once the student decides.
+let lastOrder: { control: HTMLElement | null; form: HTMLFormElement | null; submitter: HTMLElement | null } | null = null
+// While set, our listeners step aside so the replayed click reaches Amazon. Time-boxed so it can't stay open.
+let releasedUntil = 0
+const RELEASE_WINDOW_MS = 1500
+
+// The student chose to buy: let their original order click through to Amazon, once. Never in testing mode.
+function releaseCheckout(): boolean {
+  if (testMode || !lastOrder) return false
+  const { control, form, submitter } = lastOrder
+  lastOrder = null
+  releasedUntil = Date.now() + RELEASE_WINDOW_MS
+  if (control?.isConnected) {
+    control.click()
+    return true
+  }
+  if (form?.isConnected) {
+    form.requestSubmit(submitter?.isConnected ? submitter : undefined)
+    return true
+  }
+  // Amazon re-rendered and the button is gone: nothing to replay, so the lock holds.
+  releasedUntil = 0
+  return false
+}
+
+const isReleased = () => Date.now() < releasedUntil
+
+function intercept(e: Event, origin: { control?: HTMLElement | null; form?: HTMLFormElement | null; submitter?: HTMLElement | null }) {
   // A paused interceptor lets orders through, except in testing mode, where nothing is ever ordered.
   if (interceptorActive === false && !testMode) return
   e.preventDefault()
   e.stopImmediatePropagation()
+  lastOrder = { control: origin.control ?? null, form: origin.form ?? null, submitter: origin.submitter ?? null }
   const cart = scrapeCheckout()
   useInterceptorStore.getState().openIntercept(cart)
   requestEvaluation(cart)
@@ -290,16 +318,32 @@ function requestEvaluation(cart: InterceptedCart) {
 // Capture-phase delegation on window: runs before Amazon's own handlers and survives the
 // button being re-rendered (address/payment changes swap out the checkout DOM).
 function onClick(e: MouseEvent) {
-  if (isOrderControl(e.target as Element | null)) intercept(e)
+  const target = e.target as Element | null
+  if (isReleased()) {
+    // Let the replayed click through. A submit button also fires a submit next, so keep the window open for it;
+    // otherwise close it now so a second click can't sneak another order through.
+    if (!(target as HTMLButtonElement | HTMLInputElement | null)?.form) releasedUntil = 0
+    return
+  }
+  if (isOrderControl(target)) {
+    const control = (target?.closest(CHECKOUT_SELECTORS) ?? target?.closest(CLICKABLE)) as HTMLElement | null
+    intercept(e, { control })
+  }
 }
 
 // Catches keyboard submission (Enter) of the order form, which never fires a click on the button. A submit with
 // no submitter (form.submit() from script) is caught in testing mode if the form holds an order button.
 function onSubmit(e: SubmitEvent) {
+  if (isReleased()) {
+    releasedUntil = 0 // the replayed order went through; anything after this is intercepted again
+    return
+  }
   const form = e.target as HTMLFormElement | null
   const formHasOrderButton = Boolean(form?.querySelector?.(CHECKOUT_SELECTORS)) ||
     Array.from(form?.querySelectorAll?.(CLICKABLE) ?? []).some((el) => looksLikeOrderControl(el))
-  if (isOrderControl(e.submitter) || (testMode && !e.submitter && formHasOrderButton)) intercept(e)
+  if (isOrderControl(e.submitter) || (testMode && !e.submitter && formHasOrderButton)) {
+    intercept(e, { form, submitter: e.submitter })
+  }
 }
 
 function init() {
@@ -310,6 +354,7 @@ function init() {
   onSettingsChanged(applySettings)
   loadTestMode().then(applyTestMode, () => applyTestMode(true))
   onTestModeChanged(applyTestMode)
+  useInterceptorStore.getState().setReleaseCheckout(releaseCheckout)
   mountOverlay()
   window.addEventListener('click', onClick, true)
   window.addEventListener('submit', onSubmit, true)

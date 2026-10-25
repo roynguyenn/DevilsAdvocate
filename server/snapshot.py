@@ -19,6 +19,8 @@ import store
 LEDGER_SIZE = 10
 SIM_MERCHANT = "Amazon.com (simulated)"
 SIM_TAG = "SIMULATED"
+# A real Amazon order the student chose to place after the overlay (Live mode). Shown as Amazon.com.
+ORDER_TAG = "ORDER"
 SEED_TAG = "SEED"
 # Must match TransactionCategory in extension/src/store.ts.
 CATEGORIES = {"shopping", "transport", "coffee", "groceries", "dining", "subscriptions"}
@@ -59,6 +61,7 @@ def parse_nessie_purchase(p: dict, merchant: dict | None = None) -> dict:
     if ts is None:
         ts = int(datetime.fromisoformat(p["purchase_date"]).timestamp() * 1000)
     simulated = tag == SIM_TAG
+    placed_by_us = tag in (SIM_TAG, ORDER_TAG)
     category = merchant.get("category")
     return {
         "id": p["_id"],
@@ -67,6 +70,8 @@ def parse_nessie_purchase(p: dict, merchant: dict | None = None) -> dict:
         "amount": amount,
         "timestamp": ts,
         "simulated": simulated,
+        # Logged through our server (Buy it/anyway), so it isn't in the starting balance yet.
+        "placed_by_us": placed_by_us,
     }
 
 
@@ -81,8 +86,8 @@ def assemble(account: dict, bills: list, deposits: list, savings_deposits: list,
     spent = sum(t["amount"] for t in purchases if _this_month(t["timestamp"]))
     return {
         # Nessie never changes the balance on a purchase. Seeded spending is already reflected in the
-        # starting balance; simulated purchases aren't, so we deduct them here.
-        "balance": round(account["balance"] - sum(t["amount"] for t in purchases if t["simulated"]), 2),
+        # starting balance; purchases logged through our server (simulated or real) aren't, so we deduct them here.
+        "balance": round(account["balance"] - sum(t["amount"] for t in purchases if t["placed_by_us"]), 2),
         "monthly_bills": profile["fixed_bills"],
         "monthly_income": profile["monthly_income"],
         "savings": profile["savings"],
@@ -124,8 +129,9 @@ def get_financial_snapshot(account_id: str | None = None) -> dict:
     return {**snap, "source": describe_source(account_id)}
 
 
-def record_simulated_purchase(title: str, price: float, account_id: str | None = None) -> None:
-    """Log a 'Buy anyway' as a fake purchase on the Nessie account. Nothing is ordered anywhere."""
+def record_simulated_purchase(title: str, price: float, account_id: str | None = None, simulated: bool = True) -> None:
+    """Log a 'Buy it/anyway' on the Nessie account so the next score reflects it. simulated=True (Testing mode):
+    nothing is ordered anywhere. simulated=False: the student is placing the real Amazon order themselves."""
     account_id = account_id or finances.linked_account_id()
     nessie.create_purchase(account_id, finances.nessie_ids()["merchant_id"], price, date.today().isoformat(),
-                           purchase_description(SIM_TAG, title, price, _now_ms()))
+                           purchase_description(SIM_TAG if simulated else ORDER_TAG, title, price, _now_ms()))

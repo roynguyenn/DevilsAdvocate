@@ -4,6 +4,8 @@ export interface Purchase {
   title: string
   price: number
   category?: string
+  // /purchase only: false when the student is placing the real order (Live mode).
+  simulated?: boolean
 }
 
 export interface ChatTurn {

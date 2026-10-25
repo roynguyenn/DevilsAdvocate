@@ -46,6 +46,8 @@ class Purchase(BaseModel):
     price: float = Field(gt=0, le=100_000)
     quantity: int = 1
     category: str = "other"
+    # /purchase only: False when the student placed the real order (Live mode) rather than a simulated one.
+    simulated: bool = True
 
 
 class Settings(BaseModel):
@@ -166,8 +168,9 @@ def evaluate(purchase: Purchase, debug: bool = False):
 
 @app.post("/purchase")
 def simulate_purchase(purchase: Purchase):
-    """'Buy anyway' in the overlay. SIMULATED: logs a fake purchase; no order is placed on Amazon."""
-    record_simulated_purchase(purchase.title, purchase.price)
+    """'Buy it/anyway' in the overlay: records the purchase in Nessie. In Testing mode it's simulated and nothing is
+    ordered; in Live mode (simulated=false) the extension then releases the real Place Order click itself."""
+    record_simulated_purchase(purchase.title, purchase.price, simulated=purchase.simulated)
     return {"snapshot": _snapshot_for_ui(get_financial_snapshot())}
 
 

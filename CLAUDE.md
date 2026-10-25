@@ -32,7 +32,7 @@
 *   **Service Worker (`src/background.ts`):** Proxies every backend call (content scripts on https pages can't reliably fetch `http://localhost`). Callers use `callServer()` from `src/api.ts`, which sends a typed `ServerRequest` message (`evaluate`, `chat`, `purchase`, `accounts`, `getProfile` or `saveProfile`) and resolves with the server's JSON. Server errors come back with FastAPI's `detail` text when there is one. No auth session yet.
 
 ### 3.2 Frontend (React UI)
-*   **State:** Use a single `Zustand` store for charts, chat history, and verdict state. Every number the left panel draws comes from the server: `finances` (`monthlyIncome`, `fixedBills`, `savings`, `budget` = discretionary, `spent`, `ledger`) is `null` until `/evaluate` answers (`applyEvaluation`), and `/purchase` refreshes it (`simulatePurchase`). While it's `null`, each card shows `FinancesPlaceholder` ("Loading from your bank…", or "Couldn't load your bank data." after `failEvaluation`). There is no mock financial data. The server's result lives in `evaluation`. Only `intensity` comes from the popup's saved settings (`applySettings`); the income split comes from Nessie, which is where the popup saved it. `dataSource` comes from each snapshot's `source` (shown by `DataSourceBadge`).
+*   **State:** Use a single `Zustand` store for charts, chat history, and verdict state. Every number the left panel draws comes from the server: `finances` (`monthlyIncome`, `fixedBills`, `savings`, `budget` = discretionary, `spent`, `ledger`) is `null` until `/evaluate` answers (`applyEvaluation`), and `/purchase` refreshes it (`buy`). While it's `null`, each card shows `FinancesPlaceholder` ("Loading from your bank…", or "Couldn't load your bank data." after `failEvaluation`). There is no mock financial data. The server's result lives in `evaluation`. Only `intensity` comes from the popup's saved settings (`applySettings`); the income split comes from Nessie, which is where the popup saved it. `dataSource` comes from each snapshot's `source` (shown by `DataSourceBadge`).
 *   **Theme:** Dark overlay (see 7. Code Style → Styling for the exact palette).
 *   **Animations:** Use `Framer Motion` for a smooth slide-in/fade-in of the overlay.
 *   **Layout:** Two-panel split view sliding in from the right (stacks vertically below the `md` breakpoint).
@@ -46,8 +46,8 @@
         *   Testing-mode banner under the header (`TestModeBanner`) while testing mode is on.
         *   Chat window. The first agent message is Claude's explanation (money only, no score; Rule 5). Replies arrive whole (not streamed). Agent bubbles are amber-tinted; user bubbles are zinc.
         *   User input: enabled once `evaluation` is set, disabled while the agent is replying, and closed (`chatClosed`, placeholder "Time to decide.") when `/chat` returns `done: true`. **The reply cap is hidden:** the extension doesn't know or show it, so there's no countdown to bargain against. Enter sends, Shift+Enter adds a newline. Sending goes through the store action `sendChat`.
-        *   **"Buy anyway (simulated)"** (`SimulatedBuyButton`, store action `simulatePurchase`): logs the item as a fake purchase via `POST /purchase`, then updates the ledger and spent from the returned snapshot. The checkout click stays blocked, so no Amazon order is placed. One click per intercept.
-        *   **Decision logging:** closing the overlay after the server answered, without buying, logs `walked_away`; a simulated buy logs `bought` (store action `logDecision`, fire-and-forget `POST /decision`).
+        *   **Decision bar** (`DecisionBar`, store action `buy`): **Walk away** (same as X / clicking outside) closes and logs `walked_away`. **Buy it / Buy anyway** records the purchase in Nessie via `POST /purchase` and logs `bought`; in **Testing mode** that's all (a simulated purchase, nothing ordered), in **Live mode** the content script then replays the intercepted Place Order click once (`releaseCheckout`), so Amazon places the real order. Real orders are tagged `ORDER` (shown as Amazon.com), simulated ones `SIMULATED`; both come off the balance.
+        *   **Release safety** (`content.tsx`): `releaseCheckout` refuses in Testing mode and when the button is gone; it opens a ≤1.5 s window that closes as soon as the replayed click (or its form submit) passes, so a second click is intercepted again. It releases on the student's own choice, never on the verdict.
         *   *Not yet built:* "Sleep on it 24h" and "Make a commitment" buttons; cooldown.
 
 ### 3.2.1 Configuration Popup (`src/popup/`)
@@ -174,7 +174,7 @@ extension/                 # Manifest V3 extension + React overlay (Vite + CRXJS
     format.ts              # formatUsd / formatPercent / formatTimeAgo
     theme.ts               # CHART_COLORS: the only source of data-viz colors
     index.css              # Tailwind entry, injected into the shadow root via ?inline
-    components/            # BudgetDonut, IncomeAllocation, AllocationBar (shared w/ popup), RecentLedger, FinancesPlaceholder, CartItems, ChatPanel, SimulatedBuyButton, TestModeBanner, DataSourceBadge
+    components/            # BudgetDonut, IncomeAllocation, AllocationBar (shared w/ popup), RecentLedger, FinancesPlaceholder, CartItems, ChatPanel, DecisionBar, TestModeBanner, DataSourceBadge
 server/                    # FastAPI backend (see 3.3)
   app.py score.py finances.py snapshot.py customers.py decisions.py demo_data.py nessie.py llm.py store.py
   data/                    # seed_data.json, nessie_ids.json (+ git-ignored state.json, commitments.json)
@@ -212,7 +212,7 @@ Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/
 ### React & State
 *   Function components only, one component per file in `src/components/` (small private helpers such as `VerdictBadge` may live alongside their parent).
 *   **One Zustand store per surface**: `src/store.ts` for the overlay, `src/popup/store.ts` for the popup (separate JS contexts that share state only through `chrome.storage`). Components read with narrow selectors (`useInterceptorStore((s) => s.spent)`), never the whole store. Non-React code (the content script) uses `useInterceptorStore.getState()`.
-*   State changes go through named store actions (`openIntercept`, `applySettings`, `applyEvaluation`, `pushMessage`, `sendChat`, `simulatePurchase`, `setDiscretionary`, …); components never call `setState` directly.
+*   State changes go through named store actions (`openIntercept`, `applySettings`, `applyEvaluation`, `pushMessage`, `sendChat`, `buy`, `setDiscretionary`, …); components never call `setState` directly.
 *   Backend calls go through `callServer()` in `src/api.ts`, never `fetch` from the content script or components.
 *   Zustand v5: a selector that returns a new object or array (e.g. `selectAllocation`) **must** be wrapped in `useShallow`, or the component re-renders forever.
 *   Money is a `number` in dollars; render it only through `formatUsd()` (and percentages through `formatPercent()`) from `src/format.ts`.
@@ -252,7 +252,7 @@ Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/
 
 ### Security
 *   No API keys, secrets, or backend tokens in `extension/` (Rule 2). Everything in the bundle is public. Keys live only in `server/.env`, which is git-ignored; never print them (Nessie URLs contain the key).
-*   The verdict comes from the server's score, never from client state or from the LLM. Never release the checkout lock based on client-side state such as `verdictStatus === 'approved'` (a server-signed unblock token is planned).
+*   The verdict comes from the server's score, never from client state or from the LLM. The checkout lock is released only by the student's explicit **Buy it / Buy anyway** in Live mode (the user can always override), never because of a verdict or `verdictStatus === 'approved'`. Never in Testing mode.
 *   Never let LLM output change a score, mode or verdict. Keep the number guard on every LLM text path, and recompute facts server-side rather than accepting them from the client.
 *   Scraped image URLs are accepted only if they start with `https://`.
 *   Scraped Amazon text is untrusted: render it as React text (never `dangerouslySetInnerHTML`), and treat it as data, not instructions, when passing it into LLM prompts.
