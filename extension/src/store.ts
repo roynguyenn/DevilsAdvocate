@@ -33,12 +33,18 @@ export interface Transaction {
   simulated?: boolean
 }
 
+// Which data the server read (server/snapshot.py describe_source). Shown so developers know what they're testing.
+export type DataSource =
+  | { type: 'seed' }
+  | { type: 'nessie'; customer_id: string; account_id: string; customer_name: string }
+
 // What the server's charts data looks like (server/app.py _snapshot_for_ui).
 export interface ServerSnapshot {
   budget: number
   spent_this_month: number
   balance: number
   transactions: Transaction[]
+  source: DataSource
 }
 
 // Shape returned by the server's POST /evaluate. The score itself never leaves the server; only the verdict does.
@@ -48,7 +54,12 @@ export interface Evaluation {
   snapshot: ServerSnapshot
 }
 
-const fromSnapshot = (s: ServerSnapshot) => ({ totalBudget: s.budget, spent: s.spent_this_month, ledger: s.transactions })
+const fromSnapshot = (s: ServerSnapshot) => ({
+  totalBudget: s.budget,
+  spent: s.spent_this_month,
+  ledger: s.transactions,
+  dataSource: s.source,
+})
 
 interface InterceptorState {
   // Income split comes from the popup's saved Settings; the rest is a mock financial snapshot,
@@ -62,6 +73,7 @@ interface InterceptorState {
   spent: number
   daysUntilPayday: number
   ledger: Transaction[]
+  dataSource: DataSource | null
 
   cartItemName: string
   cartItemPrice: number
@@ -130,6 +142,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   spent: 540,
   daysUntilPayday: 9,
   ledger: MOCK_LEDGER,
+  dataSource: null,
 
   cartItemName: 'Sony WH-1000XM5 Wireless Headphones',
   cartItemPrice: 179.99,

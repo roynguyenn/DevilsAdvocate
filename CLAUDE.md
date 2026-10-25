@@ -78,8 +78,8 @@
     *   `llm.py`: `explain(facts)` and `chat(facts, title, history)`. Both pass only `public_facts` (price, balance_after, bills_14d, bills_window_days, budget_left_after, action) to Claude, through `_grounded_or`, which falls back to `template_message` when there's no key, the API errors, Claude refuses, `numbers_are_grounded` fails, or `mentions_internals` matches. The persona and per-verdict instructions live in `SYSTEM` / `CHAT_SYSTEM`.
     *   `store.py`: reads/writes `data/state.json` (settings, `regret_penalty`, `blocks_this_week`) and `data/commitments.json`, via temp file + rename. Both files are git-ignored and recreated from defaults.
 *   **Endpoints:**
-    *   `GET /health` → `{ ok: true }`.
-    *   `POST /evaluate` `{ title, price, quantity?, category? }` → `{ action, message, snapshot }`, where `snapshot` is `{ budget, spent_this_month, balance, transactions }` for the UI. `?debug=true` adds `debug` with the full facts (`score_before`, `score_after`, `components_after`, `floor`, …) for development; the extension never asks for it.
+    *   `GET /health` → `{ ok: true, source }`, where `source` is `{ type: "seed" }` or `{ type: "nessie", customer_id, account_id, customer_name }` (local files only, no Nessie call). The same `source` is in every snapshot, and the overlay shows it at the bottom of the left panel (`DataSourceBadge`).
+    *   `POST /evaluate` `{ title, price, quantity?, category? }` → `{ action, message, snapshot }`, where `snapshot` is `{ budget, spent_this_month, balance, transactions, source }` for the UI. `?debug=true` adds `debug` with the full facts (`score_before`, `score_after`, `components_after`, `floor`, …) for development; the extension never asks for it.
     *   `POST /purchase` `{ title, price }` → `{ snapshot }`. **SIMULATED** "Buy anyway": records a fake purchase so the ledger and the next score reflect it. Nothing is ordered anywhere.
     *   `POST /chat` `{ purchase, history: [{ role: user|assistant, content }] }` → `{ reply, done }`. History must end with a user turn; more than 3 user turns returns `done: true` without calling Claude. Facts are recomputed server-side, never taken from the client.
     *   `GET|PUT /settings` `{ budget, buffer_target, mode: aware|strict, floor }`.
@@ -153,7 +153,7 @@ extension/                 # Manifest V3 extension + React overlay (Vite + CRXJS
     format.ts              # formatUsd / formatPercent / formatTimeAgo
     theme.ts               # CHART_COLORS: the only source of data-viz colors
     index.css              # Tailwind entry, injected into the shadow root via ?inline
-    components/            # BudgetDonut, IncomeAllocation, AllocationBar (shared w/ popup), RecentLedger, ChatPanel, SimulatedBuyButton
+    components/            # BudgetDonut, IncomeAllocation, AllocationBar (shared w/ popup), RecentLedger, ChatPanel, SimulatedBuyButton, DataSourceBadge
 server/                    # FastAPI backend (see 3.3)
   app.py score.py snapshot.py nessie.py llm.py store.py
   data/                    # seed_snapshot.json, nessie_ids.json (+ git-ignored state.json, commitments.json, purchases.json)

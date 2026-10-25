@@ -109,16 +109,27 @@ def _source() -> str:
     return os.getenv("DATA_SOURCE", "seed")
 
 
+def describe_source() -> dict:
+    """Which data the server is reading, for dev display. Reads local files only (no Nessie call)."""
+    if _source() != "nessie":
+        return {"type": "seed"}
+    ids = _nessie_ids()
+    return {"type": "nessie", "customer_id": ids["customer_id"], "account_id": ids["account_id"],
+            "customer_name": f"Test {ids.get('last_name', '')}".strip()}
+
+
 def get_financial_snapshot() -> dict:
-    """Returns {balance, bills_14d, spent_this_month, transactions}. Money is dollars."""
+    """Returns {balance, bills_14d, spent_this_month, transactions, source}. Money is dollars."""
     seed = _seed()
     seeded = _seed_transactions(seed)
     if _source() == "nessie":
         account_id = _nessie_ids()["account_id"]
         balance = nessie.get_account(account_id)["balance"]
         bills = bills_due_within(nessie.get_bills(account_id), date.today())
-        return _assemble(balance, bills, seeded, _nessie_purchases(account_id))
-    return _assemble(seed["balance"], seed["bills_14d"], seeded, _local_purchases())
+        snap = _assemble(balance, bills, seeded, _nessie_purchases(account_id))
+    else:
+        snap = _assemble(seed["balance"], seed["bills_14d"], seeded, _local_purchases())
+    return {**snap, "source": describe_source()}
 
 
 def record_simulated_purchase(title: str, price: float) -> None:

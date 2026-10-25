@@ -50,5 +50,13 @@ def test_nessie_purchase_keeps_exact_price_from_description():
     assert row["amount"] == 179.99 and row["timestamp"] == 1793000000000
 
 
+def test_source_is_reported_for_each_mode(monkeypatch):
+    assert client.get("/health").json()["source"] == {"type": "seed"}
+    monkeypatch.setenv("DATA_SOURCE", "nessie")
+    src = snapshot.describe_source()
+    ids = snapshot._nessie_ids()
+    assert src["type"] == "nessie" and src["customer_id"] == ids["customer_id"]
+
+
 def test_purchase_rejects_non_positive_price():
     assert client.post("/purchase", json={"title": "x", "price": 0}).status_code == 422

@@ -15,7 +15,7 @@ load_dotenv()  # before importing modules that read env vars
 import llm  # noqa: E402
 import score  # noqa: E402
 import store  # noqa: E402
-from snapshot import get_financial_snapshot, record_simulated_purchase  # noqa: E402
+from snapshot import describe_source, get_financial_snapshot, record_simulated_purchase  # noqa: E402
 
 app = FastAPI(title="Spend-aware checkout")
 
@@ -68,7 +68,7 @@ MAX_USER_TURNS = 3
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    return {"ok": True, "source": describe_source()}
 
 
 def _snapshot_for_ui(snap: dict, state: dict) -> dict:
@@ -78,6 +78,7 @@ def _snapshot_for_ui(snap: dict, state: dict) -> dict:
         "spent_this_month": snap["spent_this_month"],
         "balance": snap["balance"],
         "transactions": snap["transactions"],
+        "source": snap["source"],
     }
 
 

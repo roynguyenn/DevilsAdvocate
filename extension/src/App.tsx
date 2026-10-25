@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ShoppingCart } from 'lucide-react'
 import BudgetDonut from './components/BudgetDonut'
 import ChatPanel from './components/ChatPanel'
+import DataSourceBadge from './components/DataSourceBadge'
 import IncomeAllocation from './components/IncomeAllocation'
 import RecentLedger from './components/RecentLedger'
 import { formatUsd } from './format'
@@ -56,6 +57,8 @@ function DataPanel() {
       <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-zinc-700 bg-panel p-4">
         <RecentLedger />
       </div>
+
+      <DataSourceBadge />
     </div>
   )
 }
