@@ -150,11 +150,17 @@ def _intensity() -> str:
 
 @app.post("/evaluate")
 def evaluate(purchase: Purchase, debug: bool = False):
-    """The score and threshold stay server-side: the extension only gets the verdict and the wording.
-    `?debug=true` adds the full facts (scores, components, floor) for development."""
+    """The extension gets the verdict, the wording and the score (score_before/after), which it uses as a hidden
+    heuristic and never shows. Claude never sees the score. `?debug=true` adds every fact for development."""
     snap = get_financial_snapshot()
     facts = _with_context(score.evaluate(snap, purchase.model_dump(), store.load_state()), purchase.title, snap)
-    body = {"action": facts["action"], "message": llm.explain(facts, _intensity()), "snapshot": _snapshot_for_ui(snap)}
+    body = {
+        "action": facts["action"],
+        "score_before": facts["score_before"],
+        "score_after": facts["score_after"],
+        "message": llm.explain(facts, _intensity()),
+        "snapshot": _snapshot_for_ui(snap),
+    }
     return {**body, "debug": facts} if debug else body
 
 

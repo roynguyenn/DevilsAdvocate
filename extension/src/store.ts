@@ -65,9 +65,12 @@ export interface ServerSnapshot {
   source: DataSource
 }
 
-// Shape returned by the server's POST /evaluate. The score itself never leaves the server; only the verdict does.
+// Shape returned by the server's POST /evaluate. The score is a hidden heuristic: kept here for the overlay's
+// logic, never rendered, and never sent to Claude.
 export interface Evaluation {
   action: 'inform' | 'nudge' | 'block'
+  score_before: number
+  score_after: number
   message: string
   snapshot: ServerSnapshot
 }

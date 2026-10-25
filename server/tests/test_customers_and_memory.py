@@ -81,7 +81,7 @@ def test_past_decisions_reach_claude_for_a_similar_item_only(bank):
     assert same["debug"]["past_decisions"] and "Walked away" in same["debug"]["past_decisions"][0]
     assert "past_decisions" not in other["debug"]
     assert "past_decisions" in llm.public_facts(same["debug"])  # Claude sees them
-    assert set(same) == {"action", "message", "snapshot", "debug"}  # the extension still never gets the score
+    assert not {"score_before", "score_after"} & set(llm.public_facts(same["debug"]))  # Claude never sees the score
 
 
 def test_memory_never_changes_the_verdict(bank):
