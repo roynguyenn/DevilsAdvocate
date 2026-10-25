@@ -1,27 +1,36 @@
-import { FlaskConical, ShoppingCart } from 'lucide-react'
+import { CheckCircle2, FlaskConical, MessageSquareWarning } from 'lucide-react'
 import { useInterceptorStore } from '../store'
 
-// How the student decides, without extra buttons: closing this returns them to the checkout. Clicking Place your
-// order again for the same cart is their decision to buy (logged, and added to their transactions); leaving the
-// page or checking out something else is logged as walking away.
+// The overlay only opens when the score flags a purchase, and then the agent is the judge: the order starts not
+// approved and Claude can approve it in the chat. Either way the student decides by closing this and clicking Place
+// your order again (always allowed; without approval it's logged as bought_unapproved).
 export default function DecisionBar() {
   const hasEvaluation = useInterceptorStore((s) => s.evaluation !== null)
+  const approved = useInterceptorStore((s) => s.agentApproved)
   const testMode = useInterceptorStore((s) => s.testMode)
   if (!hasEvaluation) return null
 
+  const how = testMode ? ' It will be logged as a purchase; nothing is ordered (testing mode).' : ''
   return (
-    <p className="flex items-start gap-1.5 border-t border-zinc-800 bg-panel px-4 pt-3 text-xs text-zinc-400">
-      {testMode ? (
-        <FlaskConical className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sky-300" aria-hidden />
+    <div className="flex flex-col gap-1 border-t border-zinc-800 bg-panel px-4 pt-3 text-xs">
+      {approved ? (
+        <p className="flex items-center gap-1.5 font-medium text-emerald-300">
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden /> Approved
+        </p>
       ) : (
-        <ShoppingCart className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+        <p className="flex items-center gap-1.5 font-medium text-amber-300">
+          <MessageSquareWarning className="h-3.5 w-3.5 shrink-0" aria-hidden /> Not approved yet: make your case
+        </p>
       )}
-      <span>
-        Still want it? Close this and click <span className="font-medium text-zinc-200">Place your order</span> again.{' '}
-        {testMode
-          ? "It's added to your transactions, but nothing is ordered (testing mode)."
-          : 'Your order goes through and is added to your transactions.'}
-      </span>
-    </p>
+      <p className="flex items-start gap-1.5 text-zinc-400">
+        {testMode && <FlaskConical className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sky-300" aria-hidden />}
+        <span>
+          {approved
+            ? 'Close this and click Place your order to buy it.'
+            : 'You can still close this and click Place your order to buy it anyway; that gets noted.'}
+          {how}
+        </span>
+      </p>
+    </div>
   )
 }

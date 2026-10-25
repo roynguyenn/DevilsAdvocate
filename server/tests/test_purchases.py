@@ -120,3 +120,13 @@ def test_bank_outage_is_a_502_without_the_key(bank):
     r = client.post("/evaluate", json=HEADPHONES)
     assert r.status_code == 502
     assert "test-key" not in r.text
+
+
+def test_purchases_made_through_the_extension_keep_their_item_name(bank):
+    client.post("/purchase", json={"title": "2× Laughing Smith Stink Spray", "price": 30.14})
+    [stored] = [p for p in bank.purchases.values() if p["description"].startswith("SIMULATED")]
+    assert "2x Laughing Smith" in stored["description"]  # ASCII-safe: Nessie mangles "×"
+    row = snapshot.get_financial_snapshot()["transactions"][0]
+    assert row["title"] == "2x Laughing Smith Stink Spray"
+    facts = client.post("/evaluate?debug=true", json={"title": "Laughing Smith Stink Spray", "price": 15}).json()["debug"]
+    assert facts["recent_purchases"][0]["item"] == "2x Laughing Smith Stink Spray"  # Claude can see it's the same item

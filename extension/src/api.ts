@@ -48,7 +48,8 @@ export interface CustomerList {
 }
 
 // left_checkout = left without buying: they may still be deciding, so it isn't a "no".
-export type DecisionOutcome = 'bought' | 'left_checkout'
+// bought_unapproved = they bought without the agent's approval (always allowed, but noted).
+export type DecisionOutcome = 'bought' | 'bought_unapproved' | 'left_checkout'
 
 export type ServerRequest =
   | { type: 'evaluate'; purchase: Purchase }

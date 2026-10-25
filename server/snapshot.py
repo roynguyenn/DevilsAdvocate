@@ -9,6 +9,7 @@ Nessie account and tagged SIMULATED so reset_demo can hide them again.
 """
 
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 
@@ -53,11 +54,14 @@ def parse_nessie_purchase(p: dict, merchant: dict | None = None) -> dict:
     merchant = merchant or {}
     amount, ts, tag = float(p.get("amount", 0)), None, None
     parts = (p.get("description") or "").rsplit(" | ", 2)
+    title = None
     if len(parts) == 3:
         try:
             amount, ts, tag = float(parts[1]), int(parts[2]), parts[0].split(" | ", 1)[0]
         except ValueError:
             pass
+        if tag in (SIM_TAG, ORDER_TAG) and " | " in parts[0]:
+            title = parts[0].split(" | ", 1)[1]  # the cart title, so Claude can link "the same item again"
     if ts is None:
         ts = int(datetime.fromisoformat(p["purchase_date"]).timestamp() * 1000)
     simulated = tag == SIM_TAG
@@ -72,6 +76,7 @@ def parse_nessie_purchase(p: dict, merchant: dict | None = None) -> dict:
         "simulated": simulated,
         # Logged through our server (Buy it/anyway), so it isn't in the starting balance yet.
         "placed_by_us": placed_by_us,
+        **({"title": title} if title else {}),
     }
 
 
@@ -129,9 +134,14 @@ def get_financial_snapshot(account_id: str | None = None) -> dict:
     return {**snap, "source": describe_source(account_id)}
 
 
+def _ascii(text: str) -> str:
+    # Nessie mangles non-ASCII (Amazon's "2×" came back as "2�"), so store a plain-ASCII title.
+    return unicodedata.normalize("NFKD", text.replace("×", "x")).encode("ascii", "ignore").decode()
+
+
 def record_simulated_purchase(title: str, price: float, account_id: str | None = None, simulated: bool = True) -> None:
     """Log a 'Buy it/anyway' on the Nessie account so the next score reflects it. simulated=True (Testing mode):
     nothing is ordered anywhere. simulated=False: the student is placing the real Amazon order themselves."""
     account_id = account_id or finances.linked_account_id()
     nessie.create_purchase(account_id, finances.nessie_ids()["merchant_id"], price, date.today().isoformat(),
-                           purchase_description(SIM_TAG if simulated else ORDER_TAG, title, price, _now_ms()))
+                           purchase_description(SIM_TAG if simulated else ORDER_TAG, _ascii(title), price, _now_ms()))

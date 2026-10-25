@@ -284,7 +284,31 @@ function isConfirmingPurchase(): boolean {
   }
 }
 
-function intercept(e: Event) {
+// The click being held while the score comes back, so a fine score can let it through (Live mode only).
+let heldOrder: { control: HTMLElement | null; form: HTMLFormElement | null; submitter: HTMLElement | null } | null = null
+
+// Live mode, fine score: replay the held click so Amazon places the order, with the same pass-through window as
+// a confirmed second click. Returns false if the button is gone (Amazon re-rendered); the student clicks again.
+function releaseHeldOrder(): boolean {
+  const order = heldOrder
+  heldOrder = null
+  if (!order) return false
+  passUntil = Date.now() + PASS_WINDOW_MS
+  if (order.control?.isConnected) {
+    order.control.click()
+    return true
+  }
+  if (order.form?.isConnected) {
+    order.form.requestSubmit(order.submitter?.isConnected ? order.submitter : undefined)
+    return true
+  }
+  passUntil = 0
+  return false
+}
+
+type Origin = { control?: HTMLElement | null; form?: HTMLFormElement | null; submitter?: HTMLElement | null }
+
+function intercept(e: Event, origin: Origin) {
   // A paused interceptor lets orders through, except in testing mode, where nothing is ever ordered.
   if (interceptorActive === false && !testMode) return
   if (isConfirmingPurchase()) {
@@ -300,8 +324,11 @@ function intercept(e: Event) {
   }
   e.preventDefault()
   e.stopImmediatePropagation()
+  // Already waiting on the score for this click: ignore repeat clicks instead of checking twice.
+  if (useInterceptorStore.getState().checking) return
   // A different cart means the previous one was left behind.
   useInterceptorStore.getState().logDecision('left_checkout')
+  heldOrder = { control: origin.control ?? null, form: origin.form ?? null, submitter: origin.submitter ?? null }
   const cart = scrapeCheckout()
   useInterceptorStore.getState().openIntercept(cart)
   requestEvaluation(cart)
@@ -312,7 +339,20 @@ function requestEvaluation(cart: InterceptedCart) {
   // No price, nothing to score: the overlay already says so and the lock holds.
   if (cart.total === null) return
   callServer<Evaluation>({ type: 'evaluate', purchase: { title: cartTitle(cart.items), price: cart.total } })
-    .then((e) => useInterceptorStore.getState().applyEvaluation(e))
+    .then((e) => {
+      const store = useInterceptorStore.getState()
+      if (e.action !== 'inform') {
+        heldOrder = null
+        store.applyEvaluation(e) // flagged: open the overlay, not approved yet; the agent judges from here
+        return
+      }
+      // Fine score: no overlay. Testing mode records it only; Live mode lets the held order through to Amazon.
+      if (!testMode && !releaseHeldOrder()) {
+        store.showNotice('Looks fine to buy. Click Place your order again to complete it.')
+        return
+      }
+      void store.approveSilently(e)
+    })
     .catch((err: Error) => {
       console.warn('[devils-advocate] evaluate failed:', err.message)
       useInterceptorStore.getState().failEvaluation()
@@ -328,7 +368,9 @@ function onClick(e: MouseEvent) {
     if (!(target as HTMLButtonElement | HTMLInputElement | null)?.form) passUntil = 0
     return
   }
-  if (isOrderControl(target)) intercept(e)
+  if (isOrderControl(target)) {
+    intercept(e, { control: (target?.closest(CHECKOUT_SELECTORS) ?? target?.closest(CLICKABLE)) as HTMLElement | null })
+  }
 }
 
 // Catches keyboard submission (Enter) of the order form, which never fires a click on the button. A submit with
@@ -342,7 +384,7 @@ function onSubmit(e: SubmitEvent) {
   const formHasOrderButton = Boolean(form?.querySelector?.(CHECKOUT_SELECTORS)) ||
     Array.from(form?.querySelectorAll?.(CLICKABLE) ?? []).some((el) => looksLikeOrderControl(el))
   if (isOrderControl(e.submitter) || (testMode && !e.submitter && formHasOrderButton)) {
-    intercept(e)
+    intercept(e, { form, submitter: e.submitter })
   }
 }
 
