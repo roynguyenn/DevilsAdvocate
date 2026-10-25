@@ -35,7 +35,7 @@ function DataPanel() {
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-5">
-      <div className="flex shrink-0 flex-col gap-4 rounded-xl border border-zinc-700 bg-zinc-900 p-4">
+      <div className="flex shrink-0 flex-col gap-4 rounded-xl border border-zinc-700 bg-panel p-4">
         <div className="flex items-center gap-3">
           <ItemThumbnail />
           <div className="min-w-0">
@@ -48,12 +48,12 @@ function DataPanel() {
         </div>
       </div>
 
-      <section className="flex shrink-0 flex-col gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-4">
+      <section className="flex shrink-0 flex-col gap-3 rounded-xl border border-zinc-700 bg-panel p-4">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Monthly budget utilization</h3>
         <BudgetDonut />
       </section>
 
-      <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-zinc-700 bg-zinc-900 p-4">
+      <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-zinc-700 bg-panel p-4">
         <RecentLedger />
       </div>
     </div>
@@ -79,7 +79,7 @@ export default function App() {
             role="dialog"
             aria-modal="true"
             aria-label="Purchase intercepted"
-            className="absolute inset-y-0 right-0 grid w-full max-w-5xl grid-cols-1 grid-rows-[minmax(0,3fr)_minmax(0,2fr)] overflow-hidden border-l border-zinc-800 bg-zinc-950 shadow-2xl shadow-black md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:grid-rows-1"
+            className="absolute inset-y-0 right-0 grid w-full max-w-5xl grid-cols-1 grid-rows-[minmax(0,3fr)_minmax(0,2fr)] overflow-hidden border-l border-zinc-800 bg-base shadow-2xl shadow-black md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:grid-rows-1"
             initial={{ x: '100%' }}
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
