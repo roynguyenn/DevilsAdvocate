@@ -1,7 +1,8 @@
 // Data-viz colors, validated for color-vision deficiency against the panel surface (#1e1e1e).
 // Only these three hues are distinguishable when all pairs share the screen — fold anything else into neutrals.
 export const CHART_COLORS = {
-  spent: '#3987e5',
+  spent: '#e8220c',
+  discretionary: '#1a61b8',
   purchase: '#d95926',
   savings: '#199e70',
   neutral: '#3f3f46', // zinc-700: budget remaining
@@ -13,5 +14,5 @@ export const CHART_COLORS = {
 export const ALLOCATION_COLORS = {
   fixedBills: CHART_COLORS.neutralStrong,
   savings: CHART_COLORS.savings,
-  discretionary: CHART_COLORS.spent,
+  discretionary: CHART_COLORS.discretionary,
 } as const

@@ -6,6 +6,7 @@ import BaselineCard from './components/BaselineCard'
 import ConnectBankModal from './components/ConnectBankModal'
 import EnableSwitch from './components/EnableSwitch'
 import InterventionCard from './components/InterventionCard'
+import TestModeSwitch from './components/TestModeSwitch'
 import { selectCanEnable, selectIsDirty, selectSaveBlocker, selectSectionComplete, usePopupStore, type Section } from './store'
 
 const SECTIONS: { id: Section; label: string; Icon: LucideIcon }[] = [
@@ -80,6 +81,7 @@ function SaveBar() {
   const section = usePopupStore((s) => s.section)
   const saving = usePopupStore((s) => s.saving)
   const justSaved = usePopupStore((s) => s.justSaved)
+  const saveError = usePopupStore((s) => s.saveError)
   const canEnable = usePopupStore(selectCanEnable)
   const save = usePopupStore((s) => s.save)
   const setSection = usePopupStore((s) => s.setSection)
@@ -100,7 +102,11 @@ function SaveBar() {
         {justSaved ? 'Interceptor active' : isActive ? 'Save Changes' : 'Save & Activate Interceptor'}
       </button>
       <p className="mt-1.5 min-h-[1rem] text-center text-[11px] text-zinc-400" aria-live="polite">
-        {blocker ? (
+        {saveError ? (
+          <span className="text-red-300" role="alert">
+            {saveError}
+          </span>
+        ) : blocker ? (
           blocker.section === section ? (
             blocker.message
           ) : (
@@ -138,7 +144,10 @@ export default function Popup() {
           <h1 className="text-base font-semibold text-white">Devil's Advocate Configuration</h1>
           <p className="mt-0.5 text-[11px] text-zinc-400">Establish your financial baseline so the agent can keep you honest.</p>
         </div>
-        <EnableSwitch />
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <EnableSwitch />
+          <TestModeSwitch />
+        </div>
       </header>
 
       {status === 'loading' ? (

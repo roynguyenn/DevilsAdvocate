@@ -4,6 +4,24 @@ export const formatUsd = (n: number) =>
 export const formatPercent = (part: number, whole: number) =>
   whole > 0 ? `${Math.round((part / whole) * 100)}%` : '—'
 
+// Whole percentages for parts shown side by side. Rounding each part on its own lets them disagree (23% + 12% next to
+// a 36% total), so this rounds the running totals and takes differences: any run of adjacent parts adds up to the
+// rounded percentage of their combined value, and parts that cover the whole add up to exactly 100%.
+export function stackedPercents(parts: number[], whole: number): number[] | null {
+  if (whole <= 0) return null
+  let previous = 0
+  let running = 0
+  return parts.map((part) => {
+    running += part
+    const rounded = Math.round((running / whole) * 100)
+    const percent = rounded - previous
+    previous = rounded
+    return percent
+  })
+}
+
+export const formatWholePercent = (percent: number | null | undefined) => (percent == null ? '—' : `${percent}%`)
+
 export function formatTimeAgo(timestamp: number, now = Date.now()) {
   const hours = Math.max(Math.floor((now - timestamp) / 3_600_000), 0)
   if (hours < 1) return 'just now'

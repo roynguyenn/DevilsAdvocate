@@ -7,11 +7,14 @@ const LABELS = {
   done: 'Logged as simulated purchase',
 } as const
 
-// Lets the demo show what a purchase does to the ledger and the next score without placing a real order.
+// Lets the demo show what a purchase does to the ledger and the next check without placing a real order.
 export default function SimulatedBuyButton() {
   const hasEvaluation = useInterceptorStore((s) => s.evaluation !== null)
   const purchaseState = useInterceptorStore((s) => s.purchaseState)
+  const approved = useInterceptorStore((s) => s.verdictStatus === 'approved')
   const simulatePurchase = useInterceptorStore((s) => s.simulatePurchase)
+  // "Anyway" only makes sense when the purchase was questioned.
+  const label = purchaseState === 'idle' && approved ? 'Buy it (simulated)' : LABELS[purchaseState]
 
   return (
     <div className="flex items-center justify-between gap-3 border-t border-zinc-800 bg-panel px-4 pt-3">
@@ -23,7 +26,7 @@ export default function SimulatedBuyButton() {
         className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
       >
         <FlaskConical className="h-3.5 w-3.5" aria-hidden />
-        {LABELS[purchaseState]}
+        {label}
       </button>
     </div>
   )

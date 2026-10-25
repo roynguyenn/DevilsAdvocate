@@ -29,9 +29,6 @@ export const DEFAULT_SETTINGS: Settings = {
   active: false,
 }
 
-// Harsh mode: discretionary purchases above this share of the budget get a forced cooling-off timer.
-export const HARSH_COOLDOWN = { minutes: 5, budgetPercent: 10 }
-
 const STORAGE_KEY = 'settings'
 
 export async function loadSettings(): Promise<Settings> {
@@ -40,6 +37,26 @@ export async function loadSettings(): Promise<Settings> {
 }
 
 export const saveSettings = (settings: Settings) => chrome.storage.local.set({ [STORAGE_KEY]: settings })
+
+// Testing mode is stored apart from Settings so it never counts as an unsaved popup edit. It defaults to ON:
+// while it's on, the content script blocks every checkout order click, even when the interceptor is paused,
+// setup is unfinished, or Amazon's button doesn't match CHECKOUT_SELECTORS. Nothing can be ordered.
+const TEST_MODE_KEY = 'testMode'
+
+export async function loadTestMode(): Promise<boolean> {
+  const stored = await chrome.storage.local.get(TEST_MODE_KEY)
+  return stored[TEST_MODE_KEY] !== false
+}
+
+export const saveTestMode = (on: boolean) => chrome.storage.local.set({ [TEST_MODE_KEY]: on })
+
+export function onTestModeChanged(callback: (on: boolean) => void) {
+  const listener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+    if (area === 'local' && TEST_MODE_KEY in changes) callback(changes[TEST_MODE_KEY].newValue !== false)
+  }
+  chrome.storage.onChanged.addListener(listener)
+  return () => chrome.storage.onChanged.removeListener(listener)
+}
 
 export function onSettingsChanged(callback: (settings: Settings) => void) {
   const listener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {

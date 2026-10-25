@@ -1,20 +1,21 @@
 # CLAUDE.md - Project Context & Requirements
 **Project Name:** Amazon Purchase Interceptor ("Devil's Advocate")
 **Domain:** Fintech / Behavioral Economics / Browser Extension
-**Goal:** Intercept Amazon purchases at checkout and show what the purchase does to the user's finances, using a deterministic financial score built from their (Capital One Nessie / seeded) account data. Claude explains the score in plain language and answers questions about it; it never decides.
+**Goal:** Intercept Amazon purchases at checkout and show what the purchase does to the user's finances, using a deterministic financial score built from their Capital One Nessie account data. Claude explains the score in plain language and answers questions about it; it never decides.
 
 ## 1. Core Philosophy & Architecture
-**Rule 1: Fast Path Interception.** The intercept is one `POST /evaluate` call: a pure-function score plus one short Claude call (~1 s). The overlay opens immediately with mock text and is replaced when the server answers.
+**Rule 1: Fast Path Interception.** The intercept is one `POST /evaluate` call: a pure-function score plus one short Claude call (~1 s). The overlay opens immediately with a placeholder message (no numbers) and is replaced when the server answers.
 **Rule 2: Secure by Design.** The extension contains NO API keys. All LLM calls and Nessie API keys live on the backend (`server/.env`). The extension talks to the server only through the background service worker.
 **Rule 3: Checkout Only.** The intercept triggers ONLY on "Buy Now" and "Place your order" actions, NOT on "Add to Cart".
-**Rule 4: The score decides, the LLM only words.** Verdicts (`inform` / `nudge` / `block`) come from `server/score.py`, which is deterministic and unit-tested. Claude receives the computed facts and writes text; it cannot change the score, the mode or the verdict, and every number in its output must appear in the facts (or the user's own messages) or the text is replaced with a template.
+**Rule 4: The score decides, the LLM only words.** Verdicts (`inform` / `nudge` / `block`) come from `server/score.py`, which is deterministic and unit-tested. Claude receives money facts and the verdict and writes text; it cannot change the verdict, and every number in its output must appear in the facts (or the user's own messages) or the text is replaced with a template.
+**Rule 5: The score is a hidden threshold.** The score, its components, the floor and the mode never reach the user: not in the UI, not in `/evaluate`'s response (except `?debug=true`), and not in Claude's input (`llm.public_facts`). Claude's replies are rejected if they mention a score, rating, threshold, floor or algorithm (`llm.mentions_internals`). The user only ever hears about bills, budget and balance.
 
 ---
 
 ## 2. Tech Stack & Dependencies
 *   **Extension:** Manifest V3, content scripts, background service worker. Built with `@crxjs/vite-plugin` (2.0.0-beta) on Vite 6.
 *   **Frontend UI:** React 18, TypeScript (strict), Zustand (state management), Recharts 3 (data visualization), Framer Motion (animations), lucide-react (icons), Tailwind CSS **v3** (see Guardrails: v4 breaks inside Shadow DOM).
-*   **Backend:** Python 3.10+, FastAPI + uvicorn on port 3001. State in JSON files (no database, no Redis). Dependencies in `server/requirements.txt`: fastapi, uvicorn[standard], httpx, python-dotenv, pydantic, anthropic, pytest. Responses are plain JSON (no SSE streaming yet).
+*   **Backend:** Python 3.10+, FastAPI + uvicorn on port 3001. All financial data lives in Nessie; only agent preferences and bookkeeping are in local JSON files (no other database, no Redis). Dependencies in `server/requirements.txt`: fastapi, uvicorn[standard], httpx, python-dotenv, pydantic, anthropic, pytest. Responses are plain JSON (no SSE streaming yet).
 *   **APIs:** Capital One Nessie API (mock banking), Anthropic Claude (wording and chat only). Model set by `ANTHROPIC_MODEL` in `server/.env`.
 
 ---
@@ -24,26 +25,27 @@
 ### 3.1 Browser Extension (Manifest V3)
 *   **Checkout URLs:** Amazon serves checkout at `https://www.amazon.com/checkout/*` (current "Chewbacca" pipeline, e.g. `/checkout/p/p-<id>/spc`) and the legacy `https://www.amazon.com/gp/buy/spc/handlers/display.html*`. `manifest.json` `host_permissions` and `content_scripts.matches` must list both and stay in sync. `host_permissions` also lists `http://localhost:3001/*` for the backend.
 *   **DOM Interceptor:** Content script listens for clicks on checkout buttons (`#placeYourOrder1`, `#submitOrderButtonId`, `#bottomSubmitOrderButtonId`, or exact "Buy Now" selectors). Selectors live in one `CHECKOUT_SELECTORS` list in `src/content.tsx`. "Buy Now" is not yet implemented.
-*   **Scraper:** On click, `preventDefault()` is called. Scrape the DOM for: `item_title`, `price`, `image_url` (thumbnail, `https://` only), and `category`. Every field falls back to mock values when a selector misses. `category` is not scraped yet, and the image selectors are unverified against the live Chewbacca checkout.
-*   **Activation gate:** The content script only intercepts while `settings.active` is true: it's set by **Save & Activate** in the popup and cleared by the popup's Disable switch. Until `chrome.storage` answers, it intercepts anyway (fail closed). If storage can't be read, it keeps intercepting with mock data.
+*   **Scraper:** On click, `preventDefault()` is called. Scrape **every line item** into an `InterceptedCart` `{ items: [{ name, price, quantity, imageUrl }], total }` (`imageUrl` `https://` only; `category` not scraped yet). Each title match is one item; its row is the largest ancestor (≤ 8 levels) holding no other item's title, and price/quantity/image are read inside that row (a lone item's quantity may come from anywhere on the page). **Verified on the live checkout:** item price is `.apex-price-to-pay-value .a-offscreen` ("$28.99"; the visible text is split into `$`/`28`/`.`/`99` spans, so never parse it), and quantity is the stepper's `<span data-a-selector="inner-value">4</span>`. Item prices come only from known price elements, never from a row's loose text: rows also contain unrelated `a-price`s such as the Prime upsell's $14.99. If the line prices add up to the summary subtotal only without multiplying by quantity, they're treated as line totals and divided. Quantity, most reliable first: the stepper, a `<select>` whose options are all whole numbers (Amazon's dropdown, named or not), a quantity `<input>`, an `aria-label`/`aria-valuenow` stepper, then "Qty/Quantity: N" text. Read text with `visibleText()`, never `textContent`: the dropdown's hidden `<option>`s turn "Qty: 2" into 123456789102. Missing quantities are filled from the summary's "Items (N):" count, or a lone item's subtotal ÷ unit price. The content script logs `[devils-advocate] scraped cart` to the page console. `total` is what gets scored: the order summary's "Items:" subtotal (found by its label text, so class renames don't break it), then the sum of line items if every one has a price, then the grand total / "Order total:" row. The server gets one title naming every item (`cartTitle`, e.g. "2× Charger; Standing Desk"). If none is found the price stays `null`: the overlay says "Price not found on this page", no score is requested, and the lock holds. There is no mock fallback price. A missing title becomes "Your Amazon order". `category` is not scraped yet, and the image selectors are unverified against the live Chewbacca checkout.
+*   **Activation gate:** The content script only intercepts while `settings.active` is true: it's set by **Save & Activate** in the popup and cleared by the popup's Disable switch. Until `chrome.storage` answers, it intercepts anyway (fail closed). If storage can't be read, it keeps intercepting.
 *   **Shadow DOM Root:** Mount the React application inside a Shadow DOM to completely isolate it from Amazon's global CSS.
 *   **Toolbar Popup (Configuration):** `action.default_popup` → `src/popup/index.html`, shown when the user clicks the extension icon. See 3.2.1.
-*   **Service Worker (`src/background.ts`):** Proxies every backend call (content scripts on https pages can't reliably fetch `http://localhost`). Callers use `callServer()` from `src/api.ts`, which sends a typed `ServerRequest` message (`evaluate`, `chat` or `purchase`) and resolves with the server's JSON. No auth session yet.
+*   **Service Worker (`src/background.ts`):** Proxies every backend call (content scripts on https pages can't reliably fetch `http://localhost`). Callers use `callServer()` from `src/api.ts`, which sends a typed `ServerRequest` message (`evaluate`, `chat`, `purchase`, `accounts`, `getProfile` or `saveProfile`) and resolves with the server's JSON. Server errors come back with FastAPI's `detail` text when there is one. No auth session yet.
 
 ### 3.2 Frontend (React UI)
-*   **State:** Use a single `Zustand` store for charts, chat history, and verdict state. It holds a mock snapshot (`monthlyIncome`, `fixedBills`, `totalBudget` = discretionary budget, `spent`, `daysUntilPayday`, `ledger`); savings is derived (`selectSavings` = income − fixed bills − discretionary). The server's result lives in `evaluation` (set by `applyEvaluation`), which also replaces `totalBudget`, `spent` and `ledger` with the server's snapshot so the donut and Recent Ledger match the score. The mock values only show until the server answers. `monthlyIncome`, `fixedBills`, `savings` and `intensity` come from the popup's saved settings (`applySettings`). **Known gap:** the popup's Discretionary amount and the server's `settings.budget` are two separate budgets. The popup fills `totalBudget` first, then `applyEvaluation` overwrites it with the server's budget, so the score ignores what the user typed. Fix: have the popup `PUT /settings` on save (discretionary → `budget`).
+*   **State:** Use a single `Zustand` store for charts, chat history, and verdict state. Every number the left panel draws comes from the server: `finances` (`monthlyIncome`, `fixedBills`, `savings`, `budget` = discretionary, `spent`, `ledger`) is `null` until `/evaluate` answers (`applyEvaluation`), and `/purchase` refreshes it (`simulatePurchase`). While it's `null`, each card shows `FinancesPlaceholder` ("Loading from your bank…", or "Couldn't load your bank data." after `failEvaluation`). There is no mock financial data. The server's result lives in `evaluation`. Only `intensity` comes from the popup's saved settings (`applySettings`); the income split comes from Nessie, which is where the popup saved it. `dataSource` comes from each snapshot's `source` (shown by `DataSourceBadge`).
 *   **Theme:** Dark overlay (see 7. Code Style → Styling for the exact palette).
 *   **Animations:** Use `Framer Motion` for a smooth slide-in/fade-in of the overlay.
 *   **Layout:** Two-panel split view sliding in from the right (stacks vertically below the `md` breakpoint).
     *   **Left Panel (Data/Vis), three cards top to bottom:**
-        *   **Item + Income & Allocation card:** item thumbnail, title and price; below it monthly income and a horizontal stacked `div` bar splitting income into Fixed bills / Savings / Discretionary, with a labeled legend.
+        *   **Cart + Income & Allocation card:** every cart item (`CartItems`: thumbnail, title, quantity, line price when there are several), then the item count and scored total; below it monthly income and a horizontal stacked `div` bar splitting income into Fixed bills / Savings / Discretionary, with a labeled legend.
         *   **Monthly budget utilization card:** Recharts donut of the discretionary budget: Spent → *This purchase* (distinct, contrasting slice placed right after Spent) → Remaining, with a legend beside it. Hovering a slice or legend row expands that slice, dims the others, and shows a tooltip with name, amount and % of budget (e.g. "This purchase: $179.99 (22%)").
         *   **Recent Ledger (Transaction History) card:** scrollable list of recent Nessie purchases: category icon avatar, merchant + relative time, right-aligned negative amount. It fills the remaining panel height.
         *   *Not yet built:* Recharts bar chart of income vs. monthly spending pacing; a score gauge.
     *   **Right Panel (Agent/Chat):**
-        *   Pinned verdict badge at the top: `[ Negotiating ]`, `[ Blocked ]`, or `[ Approved ]`. `Blocked` is set only when `/evaluate` returns `action: "block"`.
-        *   Chat window. The first agent message is `Score <before> → <after>.` plus Claude's explanation. Replies arrive whole (not streamed). Agent bubbles are amber-tinted; user bubbles are zinc.
-        *   User input: enabled once `evaluation` is set, disabled while the agent is replying, and capped at `MAX_USER_TURNS` = 3 replies (mirrors the server, which enforces it). Enter sends, Shift+Enter adds a newline. Sending goes through the store action `sendChat`.
+        *   Pinned verdict badge at the top, mapped from `/evaluate`'s action: `inform` → `[ Approved ]` (under the threshold: the overlay still opens, but says they're fine to buy it), `nudge` → `[ Negotiating ]`, `block` → `[ Blocked ]`.
+        *   Testing-mode banner under the header (`TestModeBanner`) while testing mode is on.
+        *   Chat window. The first agent message is Claude's explanation (money only, no score; Rule 5). Replies arrive whole (not streamed). Agent bubbles are amber-tinted; user bubbles are zinc.
+        *   User input: enabled once `evaluation` is set, disabled while the agent is replying, and closed (`chatClosed`, placeholder "Time to decide.") when `/chat` returns `done: true`. **The reply cap is hidden:** the extension doesn't know or show it, so there's no countdown to bargain against. Enter sends, Shift+Enter adds a newline. Sending goes through the store action `sendChat`.
         *   **"Buy anyway (simulated)"** (`SimulatedBuyButton`, store action `simulatePurchase`): logs the item as a fake purchase via `POST /purchase`, then updates the ledger and spent from the returned snapshot. The checkout click stays blocked, so no Amazon order is placed. One click per intercept.
         *   *Not yet built:* "Sleep on it 24h" and "Make a commitment" buttons; cooldown.
 
@@ -51,50 +53,62 @@
 *   Fixed 440×600 page (Chrome's popup maximum height is 600px), same dark tokens as the overlay. The header has an **Enabled/Disabled switch** (see below). Below it, a tab bar (**1 Account · 2 Finances · 3 Agent**) shows **one section at a time**, each tab with a completion check (green) or a needs-attention dot (amber). Tabs follow the WAI-ARIA pattern (`role="tab"`, arrow-key navigation). The save bar stays pinned to the bottom.
 *   **No scrolling:** each section must fit the panel area (≈384px between the tabs and the save bar). Check `main.scrollHeight <= clientHeight` when changing a section's content.
 *   **Navigation:** the popup opens on the first incomplete section. Linking a bank during first-time setup moves on to Finances. When saving is blocked by a field on another tab, the hint under the save button links to that tab.
-*   **Account Connection:** an amber "Connect Bank Account" button opens a simulated Capital One / Nessie OAuth modal (`src/api/bank.ts`, mock accounts). Once linked, it shows a green "Linked: <nickname> ending in ****1234" with a Disconnect link. **Never** add a credential or API-key field: the real flow goes through the backend, and the extension stores only `{ id, nickname, last4 }`.
+*   **Account Connection:** an amber "Connect Bank Account" button opens a Capital One / Nessie sign-in modal (`src/api/bank.ts`). The account list is the demo customer's real Nessie checking accounts (`GET /accounts`); only the sign-in step is simulated (Nessie has no OAuth). Linking prefills an empty Finances tab with what the bank holds (`GET /profile?account_id=`). Once linked, it shows a green "Linked: <nickname> ending in ****1234" with a Disconnect link. **Never** add a credential or API-key field: the real flow goes through the backend, and the extension stores only `{ id, nickname, last4 }`.
 *   **Financial Baseline & Allocation (Finances tab):** a large monthly net income input, a live `AllocationBar` preview, and a currency input plus slider for Fixed Bills (gray), Savings (green) and Discretionary (blue).
     *   **Rebalancing:** editing income, fixed bills or savings auto-fills discretionary with the remainder. A manual discretionary override rebalances **savings only**; fixed bills are real obligations and never move automatically.
     *   **Validation:** math is done in whole cents. Over-allocation shows a hatched red tail on the bar and blocks saving.
-*   **Agent Intervention:** a three-card radiogroup: Light / The Gentle Nudge (yellow caution icon), Medium / The Negotiator (amber scales, default), Harsh / The Interrogator (red flame). Harsh's cooling-off rule comes from `HARSH_COOLDOWN` in `src/settings.ts` (5 minutes, over 10% of the budget). The intensity currently only changes the mock opening line; the real prompt and cooldown behavior arrive with the backend.
-*   **Save bar:** "Save & Activate Interceptor" stays disabled, with the reason shown underneath, until a bank is linked and the split equals 100% of a positive income. After activation the button reads "Save Changes" and is only enabled when something has changed.
+*   **Agent Intervention:** a three-card radiogroup: Light / The Gentle Nudge (yellow caution icon), Medium / The Negotiator (amber scales, default), Harsh / The Interrogator (red flame). Harsh's cooling-off rule comes from `HARSH_COOLDOWN` in `src/settings.ts` (5 minutes, over 10% of the budget). The intensity currently only changes the placeholder line shown before the score arrives; the real prompt and cooldown behavior arrive with the backend.
+*   **Save bar:** saving sends the account and the Finances tab to the server (`PUT /profile`), which writes them to Nessie and returns what Nessie now holds; that read-back is what gets stored in `chrome.storage`. If the server or Nessie fails, nothing is stored and the error shows under the button (`saveError`). "Save & Activate Interceptor" stays disabled, with the reason shown underneath, until a bank is linked and the split equals 100% of a positive income. After activation the button reads "Save Changes" and is only enabled when something has changed.
+*   **Testing / Live switch** (`TestModeSwitch`, under the Enabled switch): stored as its own `testMode` key in `chrome.storage.local` (not part of `Settings`, so it's never an unsaved edit), **default ON**. While on, the content script blocks every order click on checkout pages, even with the interceptor disabled or setup unfinished, and also catches order buttons that `CHECKOUT_SELECTORS` misses by their label (`ORDER_LABEL`: place order, buy now, submit/complete order, pay now; whitespace-collapsed). Nothing can be ordered. Turn it to Live only on purpose.
 *   **Enabled/Disabled switch:** pauses the interceptor without uninstalling the extension or losing settings. It flips only the persisted `settings.active` (unsaved draft edits are untouched), and open checkout tabs pick up the change live.
     *   **Disabling** requires confirming in a dialog ("Keep it on" is the focused default). This is deliberate friction: turning it off is the easy escape for an impulse buyer.
     *   **Enabling** is immediate.
     *   The switch is unavailable until a complete setup has been saved once (`selectCanEnable`).
     *   We don't use `chrome.management.setEnabled`: it needs an extra permission, and a disabled extension can't re-enable itself from its own popup.
-*   **Persistence:** `src/settings.ts` holds the `Settings` type and `loadSettings`/`saveSettings`/`onSettingsChanged`, all on `chrome.storage.local`. The content script applies changes live. Unsaved popup edits are lost when the popup closes (Chrome closes popups on blur).
+*   **Persistence:** `src/settings.ts` holds the `Settings` type and `loadSettings`/`saveSettings`/`onSettingsChanged`, all on `chrome.storage.local`. The content script applies changes live. Nessie is the source of truth for the finance fields: on open, `hydrate` re-reads `GET /profile` for the linked account and re-syncs `chrome.storage` (unless the user already started editing); offline, the stored copy stays. Unsaved popup edits are lost when the popup closes (Chrome closes popups on blur).
 
 ### 3.3 Backend (`server/`, FastAPI)
-*   **Layout:** routes in `app.py` stay thin (load state → call pure functions → save state).
+*   **Layout:** routes in `app.py` stay thin (load state → call pure functions → save state). Nessie is the only source of financial data; there is no offline/seed mode.
     *   `score.py`: pure functions only (no I/O, LLM or randomness). `compute_components`, `decide`, `evaluate` (returns the "facts" dict).
-    *   `snapshot.py`: `get_financial_snapshot()` is the only way anything reads finances. Returns `{ balance, bills_14d, spent_this_month, transactions }`.
-        *   `transactions` = seeded rows from `data/seed_snapshot.json` (they sum to $150, the worked example) + simulated purchases, newest first, latest 10. Each is `{ id, merchant, category, amount, timestamp (ms), simulated }`.
-        *   `spent_this_month` = seeded rows + simulated purchases dated this month. `balance` = source balance − simulated purchases (neither source deducts them).
-        *   `DATA_SOURCE=seed` (default): balance/bills from the seed file; simulated purchases in `data/purchases.json` (git-ignored).
-        *   `DATA_SOURCE=nessie`: balance from the account in `data/nessie_ids.json`, bills = pending/recurring bills due in the next 14 days, simulated purchases = the account's Nessie purchases minus `ignored_nessie_purchases` in `state.json`.
-        *   `record_simulated_purchase(title, price)` writes to whichever source is active.
-    *   `nessie.py`: thin httpx client. Errors are re-raised as `NessieError` without the URL, because the URL carries the API key.
-    *   `llm.py`: `explain(facts)` and `chat(facts, title, history)`, both through `_grounded_or`, which falls back to `template_message` when there's no key, the API errors, Claude refuses, or `numbers_are_grounded` fails.
-    *   `store.py`: reads/writes `data/state.json` (settings, `regret_penalty`, `blocks_this_week`) and `data/commitments.json`, via temp file + rename. Both files are git-ignored and recreated from defaults.
+    *   `finances.py`: the financial profile in Nessie (see 3.4 for the record mapping). `get_profile(account_id)` / `save_profile(account_id, income, fixed_bills, savings)`, `profile_from(...)` (pure), `monthly_bills(bills)`, `linked_account_id()` (`state.account_id`, else the seeded account), `checking_accounts()`, `account_summary()` (`{ id, nickname, last4 }`, the only account fields the extension sees).
+    *   `snapshot.py`: `get_financial_snapshot()` is the only way anything reads finances. Returns `{ balance, monthly_bills, monthly_income, savings, budget, spent_this_month, transactions, source }`; the Nessie reads run in parallel (warm ≈ 0.2 s).
+        *   `budget` = discretionary = income − fixed bills − savings, from the profile. There is one budget, and it's what the user saved in the popup.
+        *   `transactions` = the account's Nessie purchases minus `ignored_nessie_purchases` in `state.json`, newest first, latest 10. Each is `{ id, merchant, category, amount, timestamp (ms), simulated }`, with merchant name/category looked up via `GET /merchants/{id}` (cached per process); unknown categories become `shopping`.
+        *   `spent_this_month` = purchases dated this month. `balance` = Nessie balance − simulated purchases (Nessie never deducts purchases; seeded spending is already reflected in the starting balance).
+        *   `record_simulated_purchase(title, price)` creates a purchase on the linked account at the Amazon.com merchant.
+    *   `demo_data.py`: `seed_customer(seed, last_name)` and `reset_demo()`, shared by the scripts and the tests.
+    *   `nessie.py`: thin client on one pooled `httpx.Client`. Errors are re-raised as `NessieError` without the URL, because the URL carries the API key; routes turn them into a 502. A trailing slash in `NESSIE_BASE` is stripped.
+    *   `llm.py`: `explain(facts)` and `chat(facts, title, history, final)`. Both pass only `public_facts` (price, balance_after, monthly_bills, budget_left_after, action) to Claude, through `_grounded_or`, which falls back to `template_message` when there's no key, the API errors, Claude refuses, `numbers_are_grounded` fails, or `mentions_internals` matches. The persona and per-verdict instructions live in `SYSTEM` / `CHAT_SYSTEM`.
+    *   `store.py`: reads/writes `data/state.json` (settings, `regret_penalty`, `blocks_this_week`, linked `account_id`, `ignored_nessie_purchases`) and `data/commitments.json`, via temp file + rename. Both files are git-ignored, recreated from defaults, and merged over the defaults on load. No money lives here.
 *   **Endpoints:**
-    *   `GET /health` → `{ ok: true }`.
-    *   `POST /evaluate` `{ title, price, quantity?, category? }` → facts (`score_before`, `score_after`, `components_after`, `bills_14d`, `budget_left_after`, `mode`, `action`, `floor` in strict mode) + `message` + `snapshot` `{ budget, spent_this_month, balance, transactions }` for the UI. The snapshot is never sent to the LLM.
-    *   `POST /purchase` `{ title, price }` → `{ snapshot }`. **SIMULATED** "Buy anyway": records a fake purchase so the ledger and the next score reflect it. Nothing is ordered anywhere.
-    *   `POST /chat` `{ purchase, history: [{ role: user|assistant, content }] }` → `{ reply, done }`. History must end with a user turn; more than 3 user turns returns `done: true` without calling Claude. Facts are recomputed server-side, never taken from the client.
-    *   `GET|PUT /settings` `{ budget, buffer_target, mode: aware|strict, floor }`.
+    *   `GET /health` → `{ ok: true, source }`, where `source` is `{ type: "nessie", customer_id, account_id, customer_name }` for the linked account (local files only, no Nessie call). The same `source` is in every snapshot, and the overlay shows it at the bottom of the left panel (`DataSourceBadge`).
+    *   `POST /evaluate` `{ title, price, quantity?, category? }` → `{ action, message, snapshot }`, where `snapshot` is `{ monthly_income, monthly_bills, savings, budget, spent_this_month, balance, transactions, source }` for the UI. The score never leaves the server (Rule 5); `?debug=true` adds `debug` with the full facts (`score_before`, `score_after`, `components_after`, `monthly_bills`, `budget_left_after`, `floor`, …) for development and tests. The extension never asks for it.
+    *   `POST /purchase` `{ title, price }` → `{ snapshot }`. **SIMULATED** "Buy anyway": records a fake purchase in Nessie so the ledger and the next score reflect it. Nothing is ordered anywhere.
+    *   `POST /chat` `{ purchase, history: [{ role: user|assistant, content }] }` → `{ reply, done }`. History must end with a user turn. On the user's `MAX_USER_TURNS`th (3rd) reply, Claude gets `llm.FINAL_TURN`: sum up, hand them the decision (buy anyway or walk away), no question, never mention a limit; the response has `done: true`. More than 3 user turns returns `llm.closing_message` with `done: true` without calling Claude. Facts are recomputed server-side, never taken from the client.
+    *   `GET /accounts` → `[{ id, nickname, last4 }]`: the demo customer's checking accounts (no balances).
+    *   `GET /profile[?account_id=]` → `{ account, monthly_income, fixed_bills, savings, discretionary }` as Nessie holds it, for the linked account or a preview of `account_id`. 404 if it isn't one of the customer's checking accounts.
+    *   `PUT /profile` `{ account_id, monthly_income, fixed_bills, savings, discretionary }` → same shape, read back from Nessie after writing. Validated: income > 0, parts ≥ 0, and fixed + savings + discretionary = income in whole cents (422 otherwise). 409 if the account's other bills already exceed `fixed_bills`. Also links the account (`state.account_id`).
+    *   `GET|PUT /settings` `{ buffer_target, mode: aware|strict, floor }`. The budget is not a setting; it comes from the profile.
     *   Stubs (TODO): `POST /commit`, `GET /followups`, `POST /outcome`, `POST /demo/skip-week`.
-*   **Planned, not built:** a richer snapshot for the UI (`monthly_income`, `fixed_bills`, `days_until_payday`, `recent_transactions` for the Recent Ledger: latest ~10 Nessie `/purchases`, each `{ id, merchant, category, amount, timestamp }`, with `category` one of `shopping | transport | coffee | groceries | dining | subscriptions` to match `TransactionCategory` in `extension/src/store.ts`); signed unblock tokens; SSE streaming.
+*   **Planned, not built:** `days_until_payday` in the snapshot (from the income deposit date); signed unblock tokens; SSE streaming.
 
 ### 3.4 Capital One Nessie Integration
 *   **Base URL:** `https://prod-api.nessieisreal.com` (set by `NESSIE_BASE`). Auth via `?key=` from `NESSIE_KEY` in `server/.env`. Everyone shares one sandbox, so use unique fake names and no real data.
-*   **Verified behaviour:**
-    *   Creates return `{ code: 201, objectCreated: { _id, ... } }`; IDs are UUIDs (not 24-char ObjectIds).
+*   **Verified behaviour** (re-checked against the live sandbox; `tests/fake_nessie.py` reproduces it):
+    *   Creates return `{ code: 201, objectCreated: { _id, ... } }`; IDs are UUIDs (not 24-char ObjectIds). Updates (`PUT /deposits/{id}`, `/bills/{id}`, `/accounts/{id}`) return 202.
     *   `GET/POST /accounts/{id}/purchases` work; a purchase needs a `merchant_id`. Merchant `category` must be a string, not a list.
-    *   **Purchase `amount` is stored as a whole number** (1.23 → 1). We keep the exact price and time in `description` as `SIMULATED | <title> | <price> | <timestamp ms>` and parse it back (`parse_nessie_purchase`).
+    *   **Purchase and deposit `amount`, and account `balance`, are stored as whole numbers** (4500.25 → 4500). Bill `payment_amount` keeps cents. We keep exact amounts in `description` and parse them back.
     *   Neither deposits nor purchases change the account `balance`.
-    *   **`DELETE /purchases/{id}` returns 403**, so `reset_demo.py` hides existing purchases by ID instead of deleting them.
-*   **Seeding:** `server/scripts/seed_nessie.py` creates a fresh fake customer (Test Student####), a $1400 checking account, a $900 paycheck deposit, a $700 recurring rent bill and an "Amazon (demo)" merchant, then writes the IDs to `server/data/nessie_ids.json` (committed; IDs aren't secret). Each run creates a new customer.
-*   **Still to seed:** recent purchases mapped to merchants, covering every ledger category (e.g. Uber/Lyft → transport, Starbucks → coffee, Whole Foods → groceries, Chipotle → dining, Netflix → subscriptions), with a hardcoded merchant → category mapping using the same keys as `recent_transactions`.
+    *   **`DELETE /purchases/{id}` returns 403**, so `reset_demo.py` hides simulated purchases by ID instead of deleting them. DELETE works for bills and deposits.
+    *   `POST /accounts/{id}/transfers` rejects the documented body (`payee_id`, `medium`: "extra fields not permitted"), so we don't use transfers.
+    *   A trailing slash in the base URL makes every path `//...`, which returns 403 "Missing Authentication Token".
+*   **How our data maps onto Nessie records:**
+    *   Monthly income → a deposit on the linked checking account, description `INCOME | <amount>`.
+    *   Fixed bills → the checking account's recurring bills (plus pending bills due this month) = `monthly_bills`. We own the recurring bill nicknamed `Fixed bills` and set it to the user's total minus any other bills.
+    *   Monthly savings → a deposit on the customer's Savings account (created if missing), description `SAVINGS | <amount>`. Customer-wide, not per checking account.
+    *   Discretionary → derived, never stored.
+    *   Purchases → description `<SEED|SIMULATED> | <title or merchant> | <price> | <timestamp ms>` (`parse_nessie_purchase`; titles may contain ` | `).
+*   **Seeding:** `server/scripts/seed_nessie.py` writes `data/seed_data.json` to Nessie: a fresh fake customer (Test Student####), a $1400 checking and a Savings account, one merchant per ledger category (Amazon.com → shopping, Uber → transport, Starbucks → coffee, Whole Foods Market → groceries, Netflix → subscriptions, Chipotle → dining), seven purchases summing to $150 (dated in the current month), and the profile $1500 income / $700 fixed bills / $400 savings (→ $400 discretionary). It writes the IDs to `server/data/nessie_ids.json` (committed; IDs aren't secret). Each run creates a new customer.
 
 ---
 
@@ -102,20 +116,20 @@
 
 **Step 1: Financial score (deterministic, `server/score.py`).**
 *   `balance_after = balance − price`; `left_after = budget − spent − price`.
-*   `bills = clamp(100 × (balance_after / bills_14d − 1))` (100 if no bills); `budget = clamp(100 × left_after / budget)`; `buffer = clamp(100 × (balance_after − bills_14d) / buffer_target)`; each clamped to 0–100.
-*   `score = 0.5 × bills + 0.3 × budget + 0.2 × buffer − regret_penalty[category]`, rounded. "Before" is the same with price 0. Worked example (seed data, $180 item): 89 → 62.
-*   Weights are tunable defaults, not research; budget, buffer target and floor are user settings.
+*   `bills = clamp(100 × (balance_after / monthly_bills − 1))` (100 if no bills); `budget = clamp(100 × left_after / budget)`; `buffer = clamp(100 × (balance_after − monthly_bills) / buffer_target)`; each clamped to 0–100.
+*   `score = 0.5 × bills + 0.3 × budget + 0.2 × buffer − regret_penalty[category]`, rounded. "Before" is the same with price 0. Worked example (seeded Nessie customer, $180 item): 89 → 62.
+*   Weights are tunable defaults, not research. `budget` is the discretionary amount from the user's Nessie profile (popup); buffer target and floor are settings.
 
 **Step 2: Verdict (`decide`).**
 *   **Strict** (opt-in, with a floor): `score_after < floor` → `block`. After 3 blocks in a week, Strict behaves like Aware.
 *   **Aware** (default, never blocks): drop ≥ 15 points or `score_after < 50` → `nudge`; otherwise `inform`.
 *   The user can always override.
 
-**Step 3: Claude wording (`llm.explain`).** Gets the facts JSON, writes 2–3 plain sentences; in a block, ends with one commitment question. Number guard + template fallback (Rule 4).
+**Step 3: Claude wording (`llm.explain`).** Persona: a blunt but kind friend at checkout. Gets `public_facts` only, writes 2–3 plain sentences about bills, budget and balance: `inform` = "you're fine to buy this if you'd like" + one note on what it leaves, `nudge` = suggest sleeping on it, `block` = "this order is on hold" + one commitment question. Number guard, internals guard, template fallback (Rules 4–5).
 
 **Step 4: Chat (`llm.chat`, `POST /chat`).**
 *   Answers questions about this purchase in 1–3 sentences using the facts. It cannot approve, unblock or change the score, and says so when asked. It can't verify claims about how the item will be used.
-*   **Turn cap:** 3 user replies, enforced server-side.
+*   **Hidden turn cap:** 3 user replies, enforced server-side and never shown. Rationale: past that point the user just circles until they buy, so the last reply wraps up and makes them decide right there.
 *   The scraped item title is untrusted page text and is passed as data.
 
 **Step 5: Follow-up loop (planned).** Commitments with a follow-up date; answers "used / returned / unused" adjust `regret_penalty` (+5 per returned/unused, max 15; −3 per used, min 0). "Saved" money counts only if a blocked/abandoned purchase isn't bought within 7 days; in the demo that time-skip is SIMULATED and labeled.
@@ -123,12 +137,11 @@
 ---
 
 ## 5. Status & Next Steps
-Done: overlay UI, interception, service-worker proxy, score engine + tests, seed/Nessie snapshot, Claude explanation + chat with number guard, Nessie seed script, server-driven donut and Recent Ledger, simulated "Buy anyway" purchases (seed file or Nessie).
+Done: overlay UI, interception, service-worker proxy, score engine + tests, Nessie as the only data source (profile, bills, purchases with merchant categories), popup finances saved to and read back from Nessie, Claude explanation + chat with number guard, Nessie seed script, fully server-driven left panel (allocation, donut, ledger), simulated "Buy anyway" purchases in Nessie.
 Next, roughly in order:
-1.  "Sleep on it" and "Make a commitment" buttons, and a settings UI (mode, floor, budget, buffer).
+1.  "Sleep on it" and "Make a commitment" buttons, and a settings UI (mode, floor, buffer).
 2.  `/commit`, `/followups`, `/outcome`, `/demo/skip-week`, so the same cart shows a changed score after a follow-up.
-3.  Drive the Income & Allocation card from server data (needs monthly income and fixed bills in the snapshot).
-4.  Polish: score gauge, cooldown, streaming.
+3.  Polish: score gauge, cooldown, streaming.
 
 ---
 
@@ -145,19 +158,19 @@ extension/                 # Manifest V3 extension + React overlay (Vite + CRXJS
     background.ts          # Service worker: the only code that calls the backend
     api.ts                 # callServer() + request/response types for the service worker
     settings.ts            # Settings type + chrome.storage helpers shared by popup and content script
-    api/bank.ts            # Simulated Nessie OAuth (mock accounts) — replace with backend calls
+    api/bank.ts            # Account linking: real Nessie accounts via GET /accounts; the sign-in step is simulated
     popup/                 # Toolbar popup: index.html, main.tsx, Popup.tsx, store.ts, components/
     App.tsx                # Overlay shell (dark theme), two-panel layout, slide-in animation
-    store.ts               # The single Zustand store (mock snapshot, ledger, evaluation, chat, verdict)
+    store.ts               # The single Zustand store (server finances, evaluation, chat, verdict)
     format.ts              # formatUsd / formatPercent / formatTimeAgo
     theme.ts               # CHART_COLORS: the only source of data-viz colors
     index.css              # Tailwind entry, injected into the shadow root via ?inline
-    components/            # BudgetDonut, IncomeAllocation, AllocationBar (shared w/ popup), RecentLedger, ChatPanel, SimulatedBuyButton
+    components/            # BudgetDonut, IncomeAllocation, AllocationBar (shared w/ popup), RecentLedger, FinancesPlaceholder, CartItems, ChatPanel, SimulatedBuyButton, TestModeBanner, DataSourceBadge
 server/                    # FastAPI backend (see 3.3)
-  app.py score.py snapshot.py nessie.py llm.py store.py
-  data/                    # seed_snapshot.json, nessie_ids.json (+ git-ignored state.json, commitments.json, purchases.json)
-  scripts/                 # seed_nessie.py, reset_demo.py
-  tests/                   # test_score.py, test_chat.py, test_purchases.py
+  app.py score.py finances.py snapshot.py demo_data.py nessie.py llm.py store.py
+  data/                    # seed_data.json, nessie_ids.json (+ git-ignored state.json, commitments.json)
+  scripts/                 # seed_nessie.py, reset_demo.py, nessie_customer.py, show_nessie.py
+  tests/                   # fake_nessie.py (in-memory Nessie), test_score.py, test_finances.py, test_purchases.py, test_chat.py, test_nessie_live.py
   .env.example             # copy to server/.env (git-ignored)
 ```
 Run from `extension/`:
@@ -166,11 +179,14 @@ Run from `extension/`:
 *   `npm run typecheck`: types only. Must pass before any change is considered done.
 *   Load in Chrome: `chrome://extensions` → Developer mode → **Load unpacked** → `extension/dist`. After a rebuild, click reload on the extension card and refresh the Amazon tab. Then click the extension's toolbar icon and finish setup. **The interceptor does nothing until you click "Save & Activate".** After moving or renaming the project folder, remove the extension and load it again (Chrome tracks unpacked extensions by absolute path, and the extension ID changes).
 
-Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/python -m pip install -r requirements.txt`, then copy `.env.example` to `.env`):
+Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/python -m pip install -r requirements.txt`, then copy `.env.example` to `.env` and set `NESSIE_KEY`). On macOS/Linux the venv interpreter is `.venv/bin/python`.
 *   `.venv/Scripts/python -m uvicorn app:app --port 3001 --reload`: start the backend.
-*   `.venv/Scripts/python -m pytest`: run the tests. Must pass before any backend change is considered done.
-*   `.venv/Scripts/python scripts/reset_demo.py`: restore default settings, clear commitments and hide all simulated purchases (both modes); run before every rehearsal.
+*   `.venv/Scripts/python -m pytest`: run the tests (against an in-memory fake Nessie seeded from `data/seed_data.json`). Must pass before any backend change is considered done.
+*   `NESSIE_LIVE=1 .venv/Scripts/python -m pytest tests/test_nessie_live.py`: the same round trip against the real sandbox (creates a throwaway customer; ~30 s).
+*   `.venv/Scripts/python scripts/reset_demo.py`: restore default settings and the seed profile in Nessie, clear commitments, and hide simulated purchases (seeded ones stay); run before every rehearsal.
 *   `.venv/Scripts/python scripts/seed_nessie.py`: create a new fake Nessie customer and update `data/nessie_ids.json`.
+*   `.venv/Scripts/python scripts/nessie_customer.py list | show <id> | use <id>`: list every customer the key can see (all fields + accounts), dump one customer's accounts/bills/deposits/purchases, or switch the server to that customer (live, no restart). `scripts/show_nessie.py` = `show` for the current customer.
+*   Nessie deletes (tested on a throwaway customer): bills, deposits and accounts can be deleted; **purchases and customers cannot** (no such route). Never call bulk `DELETE /data`: it wipes the demo customer too.
 
 ---
 
@@ -217,8 +233,9 @@ Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/
 ## 8. Guardrails (Do / Don't)
 
 ### Safety: real money is at stake
+*   **Keep the popup on Testing (the default) while developing and demoing.** It blocks order clicks even when a selector misses or the interceptor is paused. It cannot help if the content script never loads (wrong URL pattern, extension not reloaded), so the checks below still apply.
 *   **Testing on live Amazon can place a real order.** If the content script fails to load or a selector misses, the click goes through. Before clicking "Place your order" on a live checkout, confirm that (1) the popup's switch shows **Enabled**, (2) `document.getElementById('devils-advocate-host')` exists in DevTools, and (3) the button matches `CHECKOUT_SELECTORS`. An inactive interceptor deliberately lets the order through. Prefer the mocked-page test (below) for every change. Turn off 1-Click on the demo account.
-*   Interception must **fail closed on recognized buttons**: call `preventDefault()` and `stopImmediatePropagation()` *before* any async work, scraping, or code that could throw. If the server is down, the overlay keeps the mock message and the lock still holds.
+*   Interception must **fail closed on recognized buttons**: call `preventDefault()` and `stopImmediatePropagation()` *before* any async work, scraping, or code that could throw. If the server or Nessie is down, the overlay says so (`failEvaluation`) and the lock still holds.
 *   Intercept with **capture-phase listeners on `window`** (`click` and `submit`) using `closest()` delegation, not listeners attached to the button. Amazon re-renders the checkout DOM (address/payment changes) and runs its own handlers on the button.
 *   Never intercept "Add to Cart" or any non-checkout action (Rule 3).
 *   Only fake or Nessie sandbox data. No real card numbers or personal information anywhere.
@@ -241,13 +258,13 @@ Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/
 *   Don't run `npm run build` (or another `vite` instance) while `npm run dev` is running; they fight over `dist/`. Stopping the dev server can also wipe `dist/`.
 *   Scraper selectors are best-effort and Amazon changes markup often. Always keep a fallback, and verify selectors against a real checkout page before relying on them.
 *   **Start uvicorn with `.venv/Scripts/python`, not a bare `python`.** A Python without the venv's packages (e.g. miniforge) crashes the `--reload` worker on `import anthropic` while the parent keeps port 3001, so requests hang and the overlay sits at "Waiting for the server…".
-*   `server/.env` is read only at startup: restart uvicorn after editing it (`--reload` only watches code). `DATA_SOURCE=nessie` needs `data/nessie_ids.json`.
+*   `server/.env` is read only at startup: restart uvicorn after editing it (`--reload` only watches code). The server needs `NESSIE_KEY` and `data/nessie_ids.json` (run `seed_nessie.py` once if it's missing).
 *   Git Bash treats `\` as an escape: use forward slashes in paths there (`.venv/Scripts/python`).
 
 ### Verification Before Calling Work Done
 1.  `npm run typecheck` passes and `npm run build` succeeds; `.venv/Scripts/python -m pytest` passes in `server/`.
 2.  Load the built extension in a browser and exercise the flow with the server running (`http://localhost:3001/health` returns `{"ok":true}`). A clean compile is **not** proof the extension works. Chrome/Chromium 137+ ignore `--load-extension`; for automated tests, launch Chromium with `--remote-debugging-port` and `--enable-unsafe-extension-debugging`, then call CDP `Extensions.loadUnpacked`. On macOS, copy `dist/` out of `~/Desktop` first, or Chromium can't read the path.
-3.  Route the checkout URL to a mock page with the checkout button and assert: overlay mounts, Amazon's own click/submit handlers did **not** fire, the page did not navigate, the verdict badge shows, and the first message switches to the server's score. Check both states: on a fresh profile (not activated) clicks **pass through**, and after activating via the popup they're intercepted using the saved settings.
+3.  Route the checkout URL to a mock page with the checkout button and assert: overlay mounts, Amazon's own click/submit handlers did **not** fire, the page did not navigate, the verdict badge shows, and the first message switches to the server's score. Check both states: on a fresh profile (not activated) clicks **pass through**, and after activating via the popup they're intercepted and the left panel shows the numbers saved in the popup (read back from Nessie).
 4.  For popup changes, open `chrome-extension://<id>/src/popup/index.html` at 440×600. Drive it with real keystrokes (`keyboard.press` per digit, not just `fill`), switch tabs, and assert: the save button's enabled state, that each section fits without scrolling, and the stored `chrome.storage.local` value.
 5.  Screenshot the overlay at desktop (≈1400px) and narrow (≈700px) widths, plus the popup, and actually look at them. Wait out CSS transitions (~400ms) first, or the screenshot shows half-applied states.
 
