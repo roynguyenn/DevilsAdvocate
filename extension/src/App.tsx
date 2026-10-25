@@ -1,52 +1,16 @@
-import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ShoppingCart } from 'lucide-react'
 import BudgetDonut from './components/BudgetDonut'
+import CartItems from './components/CartItems'
 import ChatPanel from './components/ChatPanel'
 import IncomeAllocation from './components/IncomeAllocation'
 import RecentLedger from './components/RecentLedger'
-import { formatUsd } from './format'
 import { useInterceptorStore } from './store'
 
-function ItemThumbnail() {
-  const imageUrl = useInterceptorStore((s) => s.cartItemImage)
-  const [failedUrl, setFailedUrl] = useState<string | null>(null)
-
-  if (imageUrl && imageUrl !== failedUrl) {
-    return (
-      <img
-        src={imageUrl}
-        alt=""
-        onError={() => setFailedUrl(imageUrl)}
-        className="h-14 w-14 shrink-0 rounded-lg bg-white object-contain p-1"
-      />
-    )
-  }
-  return (
-    <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-purchase/15 text-purchase">
-      <ShoppingCart className="h-5 w-5" aria-hidden />
-    </span>
-  )
-}
-
 function DataPanel() {
-  const name = useInterceptorStore((s) => s.cartItemName)
-  const price = useInterceptorStore((s) => s.cartItemPrice)
-
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-5">
       <div className="flex shrink-0 flex-col gap-4 rounded-xl border border-zinc-700 bg-panel p-4">
-        <div className="flex items-center gap-3">
-          <ItemThumbnail />
-          <div className="min-w-0">
-            <p className="line-clamp-2 text-sm font-medium text-zinc-100">{name}</p>
-            {price === null ? (
-              <p className="mt-0.5 text-sm text-zinc-400">Price not found on this page</p>
-            ) : (
-              <p className="mt-0.5 text-lg font-semibold tabular-nums text-zinc-100">{formatUsd(price)}</p>
-            )}
-          </div>
-        </div>
+        <CartItems />
         <div className="border-t border-zinc-800 pt-4">
           <IncomeAllocation />
         </div>

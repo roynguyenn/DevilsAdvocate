@@ -24,7 +24,7 @@ SYSTEM = (
 def template_message(facts: dict) -> str:
     msg = (
         f"Your score goes from {facts['score_before']} to {facts['score_after']}. "
-        f"You have ${facts['bills_14d']:g} in bills due in the next {facts['bills_window_days']} days, "
+        f"Your fixed bills are ${facts['monthly_bills']:g} a month, "
         f"and this leaves ${facts['budget_left_after']:g} in your monthly budget."
     )
     if facts["action"] == "block":

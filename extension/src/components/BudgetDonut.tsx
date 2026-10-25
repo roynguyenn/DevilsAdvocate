@@ -37,7 +37,7 @@ function SliceTooltip({ active, payload, totalBudget }: SliceTooltipProps) {
 
 export default function BudgetDonut() {
   const finances = useInterceptorStore((s) => s.finances)
-  const price = useInterceptorStore((s) => s.cartItemPrice) ?? 0
+  const price = useInterceptorStore((s) => s.cartTotal) ?? 0
   // Index into `visible`; drives the expanded slice, dimming of the others, and legend highlight.
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
 

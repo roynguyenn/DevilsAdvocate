@@ -19,8 +19,7 @@ def test_turn_cap_is_enforced_server_side():
     assert r.json()["done"] is True
 
 
-def test_chat_falls_back_without_api_key(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+def test_chat_falls_back_without_api_key(bank):
     history = [{"role": "assistant", "content": "Score 89 -> 62."}, {"role": "user", "content": "Why?"}]
     r = client.post("/chat", json={"purchase": PURCHASE, "history": history})
     assert r.status_code == 200

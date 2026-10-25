@@ -1,90 +1,73 @@
 """The one place that reads the user's finances, and records simulated purchases.
 
-Two sources behind one interface: seeded JSON (default, works offline) or Nessie.
-Either way the score engine and the overlay see the same shape.
+Everything comes from the Nessie demo customer (see scripts/seed_nessie.py): balance, bills,
+the income/savings profile (finances.py) and the purchase ledger, with each purchase's
+merchant mapped to a ledger category.
 
-Simulated purchases ("Buy anyway" in the overlay) never reach Amazon. In seed mode they go to
-data/purchases.json; in Nessie mode they're created on the demo account.
+Simulated purchases ("Buy anyway" in the overlay) never reach Amazon; they're created on the
+Nessie account and tagged SIMULATED so reset_demo can hide them again.
 """
 
-import json
-import os
 import time
-import uuid
-from datetime import date, datetime, timedelta
-from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime
 
+import finances
 import nessie
 import store
 
-DATA_DIR = Path(__file__).parent / "data"
-LOCAL_PURCHASES = DATA_DIR / "purchases.json"
-BILLS_WINDOW_DAYS = 14
 LEDGER_SIZE = 10
 SIM_MERCHANT = "Amazon.com (simulated)"
 SIM_TAG = "SIMULATED"
-DAY_MS = 86_400_000
+SEED_TAG = "SEED"
+# Must match TransactionCategory in extension/src/store.ts.
+CATEGORIES = {"shopping", "transport", "coffee", "groceries", "dining", "subscriptions"}
+
+# Merchants never change once created, so one lookup per merchant per process is enough.
+_merchants: dict[str, dict] = {}
 
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _seed() -> dict:
-    return json.loads((DATA_DIR / "seed_snapshot.json").read_text())
+def purchase_description(tag: str, title: str, price: float, ts: int) -> str:
+    return f"{tag} | {title} | {price:.2f} | {ts}"
 
 
-def _seed_transactions(seed: dict) -> list[dict]:
-    now = _now_ms()
-    return [
-        {"id": f"seed-{i}", "merchant": t["merchant"], "category": t["category"], "amount": t["amount"],
-         "timestamp": now - t["days_ago"] * DAY_MS, "simulated": False}
-        for i, t in enumerate(seed["transactions"])
-    ]
-
-
-def bills_due_within(bills: list, today: date, days: int = BILLS_WINDOW_DAYS) -> float:
-    """Sum of pending/recurring bills whose next payment falls in [today, today + days]."""
-    cutoff = today + timedelta(days=days)
-    total = 0.0
-    for b in bills:
-        due = b.get("upcoming_payment_date") or b.get("payment_date")
-        if b.get("status") in ("pending", "recurring") and due and today <= date.fromisoformat(due) <= cutoff:
-            total += b.get("payment_amount", 0)
-    return total
-
-
-def _description(title: str, price: float, ts: int) -> str:
-    return f"{SIM_TAG} | {title} | {price:.2f} | {ts}"
-
-
-def parse_nessie_purchase(p: dict) -> dict:
-    """Map a Nessie purchase to a ledger row, recovering the exact price and time from our description."""
-    amount, ts = float(p.get("amount", 0)), None
-    parts = (p.get("description") or "").rsplit(" | ", 2)
-    if len(parts) == 3 and parts[0].startswith(SIM_TAG):
+def _merchant(merchant_id: str | None) -> dict:
+    if not merchant_id:
+        return {}
+    if merchant_id not in _merchants:
         try:
-            amount, ts = float(parts[1]), int(parts[2])
+            _merchants[merchant_id] = nessie.get_merchant(merchant_id)
+        except nessie.NessieError:
+            return {}
+    return _merchants[merchant_id]
+
+
+def parse_nessie_purchase(p: dict, merchant: dict | None = None) -> dict:
+    """Map a Nessie purchase to a ledger row, recovering the exact price and time from our description."""
+    merchant = merchant or {}
+    amount, ts, tag = float(p.get("amount", 0)), None, None
+    parts = (p.get("description") or "").rsplit(" | ", 2)
+    if len(parts) == 3:
+        try:
+            amount, ts, tag = float(parts[1]), int(parts[2]), parts[0].split(" | ", 1)[0]
         except ValueError:
             pass
     if ts is None:
         ts = int(datetime.fromisoformat(p["purchase_date"]).timestamp() * 1000)
-    return {"id": p["_id"], "merchant": SIM_MERCHANT, "category": "shopping", "amount": amount,
-            "timestamp": ts, "simulated": True}
-
-
-def _local_purchases() -> list[dict]:
-    return json.loads(LOCAL_PURCHASES.read_text()) if LOCAL_PURCHASES.exists() else []
-
-
-def _nessie_ids() -> dict:
-    return json.loads((DATA_DIR / "nessie_ids.json").read_text())
-
-
-def _nessie_purchases(account_id: str) -> list[dict]:
-    # Nessie can't delete purchases (403), so reset_demo hides old ones by ID instead.
-    ignored = set(store.load_state().get("ignored_nessie_purchases", []))
-    return [parse_nessie_purchase(p) for p in nessie.get_purchases(account_id) if p["_id"] not in ignored]
+    simulated = tag == SIM_TAG
+    category = merchant.get("category")
+    return {
+        "id": p["_id"],
+        "merchant": SIM_MERCHANT if simulated else merchant.get("name", "Unknown merchant"),
+        "category": category if category in CATEGORIES else "shopping",
+        "amount": amount,
+        "timestamp": ts,
+        "simulated": simulated,
+    }
 
 
 def _this_month(ts: int) -> bool:
@@ -92,44 +75,49 @@ def _this_month(ts: int) -> bool:
     return (d.year, d.month) == (today.year, today.month)
 
 
-def _assemble(balance: float, bills_14d: float, seeded: list[dict], purchases: list[dict]) -> dict:
-    # Seeded rows stand for "already spent this month"; simulated ones count if they fall in this month.
-    spent = sum(t["amount"] for t in seeded) + sum(t["amount"] for t in purchases if _this_month(t["timestamp"]))
-    ledger = sorted(seeded + purchases, key=lambda t: t["timestamp"], reverse=True)[:LEDGER_SIZE]
+def assemble(account: dict, bills: list, deposits: list, savings_deposits: list, purchases: list[dict]) -> dict:
+    """Pure: combine raw Nessie records (purchases already parsed) into the snapshot."""
+    profile = finances.profile_from(deposits, bills, savings_deposits)
+    spent = sum(t["amount"] for t in purchases if _this_month(t["timestamp"]))
     return {
-        # Neither source deducts purchases from the balance (Nessie doesn't), so we do it here.
-        "balance": round(balance - sum(t["amount"] for t in purchases), 2),
-        "bills_14d": bills_14d,
+        # Nessie never changes the balance on a purchase. Seeded spending is already reflected in the
+        # starting balance; simulated purchases aren't, so we deduct them here.
+        "balance": round(account["balance"] - sum(t["amount"] for t in purchases if t["simulated"]), 2),
+        "monthly_bills": profile["fixed_bills"],
+        "monthly_income": profile["monthly_income"],
+        "savings": profile["savings"],
+        "budget": profile["discretionary"],
         "spent_this_month": round(spent, 2),
-        "transactions": ledger,
+        "transactions": sorted(purchases, key=lambda t: t["timestamp"], reverse=True)[:LEDGER_SIZE],
     }
 
 
-def _source() -> str:
-    return os.getenv("DATA_SOURCE", "seed")
+def get_financial_snapshot(account_id: str | None = None) -> dict:
+    """Returns {balance, monthly_bills, monthly_income, savings, budget, spent_this_month, transactions}.
+
+    Money is dollars. `budget` is the discretionary budget (income - fixed bills - savings).
+    """
+    account_id = account_id or finances.linked_account_id()
+    sav_id = finances.savings_account_id()
+    # Nessie round trips dominate the intercept's latency, so the independent reads run in parallel.
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        account = pool.submit(nessie.get_account, account_id)
+        bills = pool.submit(nessie.get_bills, account_id)
+        deposits = pool.submit(nessie.get_deposits, account_id)
+        savings_deposits = pool.submit(nessie.get_deposits, sav_id) if sav_id else None
+        raw = pool.submit(nessie.get_purchases, account_id)
+        # Nessie can't delete purchases (403), so reset_demo hides old ones by ID instead.
+        ignored = set(store.load_state().get("ignored_nessie_purchases", []))
+        visible = [p for p in raw.result() if p["_id"] not in ignored]
+        merchant_ids = list({p.get("merchant_id") for p in visible})
+        merchants = dict(zip(merchant_ids, pool.map(_merchant, merchant_ids)))
+        purchases = [parse_nessie_purchase(p, merchants.get(p.get("merchant_id"))) for p in visible]
+        return assemble(account.result(), bills.result(), deposits.result(),
+                        savings_deposits.result() if savings_deposits else [], purchases)
 
 
-def get_financial_snapshot() -> dict:
-    """Returns {balance, bills_14d, spent_this_month, transactions}. Money is dollars."""
-    seed = _seed()
-    seeded = _seed_transactions(seed)
-    if _source() == "nessie":
-        account_id = _nessie_ids()["account_id"]
-        balance = nessie.get_account(account_id)["balance"]
-        bills = bills_due_within(nessie.get_bills(account_id), date.today())
-        return _assemble(balance, bills, seeded, _nessie_purchases(account_id))
-    return _assemble(seed["balance"], seed["bills_14d"], seeded, _local_purchases())
-
-
-def record_simulated_purchase(title: str, price: float) -> None:
-    """Log a 'Buy anyway' as a fake purchase. Nothing is ordered anywhere."""
-    ts = _now_ms()
-    if _source() == "nessie":
-        ids = _nessie_ids()
-        nessie.create_purchase(ids["account_id"], ids["merchant_id"], price, date.today().isoformat(),
-                               _description(title, price, ts))
-        return
-    rows = _local_purchases()
-    rows.append({"id": f"sim-{uuid.uuid4().hex[:8]}", "merchant": SIM_MERCHANT, "category": "shopping",
-                 "amount": round(price, 2), "timestamp": ts, "simulated": True, "title": title})
-    store.write_json(LOCAL_PURCHASES, rows)
+def record_simulated_purchase(title: str, price: float, account_id: str | None = None) -> None:
+    """Log a 'Buy anyway' as a fake purchase on the Nessie account. Nothing is ordered anywhere."""
+    account_id = account_id or finances.linked_account_id()
+    nessie.create_purchase(account_id, finances.nessie_ids()["merchant_id"], price, date.today().isoformat(),
+                           purchase_description(SIM_TAG, title, price, _now_ms()))

@@ -14,11 +14,27 @@ export interface ChatMessage {
   content: string
 }
 
-export interface InterceptedItem {
+export interface CartItem {
   name: string
-  // null when the checkout page's price couldn't be read; we never substitute a made-up one.
+  // Unit price as shown on the line item; null when that line has no readable price.
   price: number | null
+  quantity: number
   imageUrl: string | null
+}
+
+export interface InterceptedCart {
+  items: CartItem[]
+  // What gets scored: the whole cart's item subtotal. null when the page has no readable price; we never
+  // substitute a made-up one.
+  total: number | null
+}
+
+const MAX_TITLE_LENGTH = 480 // the server caps titles at 500
+
+// One title for the server (score, chat, simulated purchase), naming every item: "2× Charger; Standing Desk".
+export function cartTitle(items: CartItem[]) {
+  const title = items.map((i) => (i.quantity > 1 ? `${i.quantity}× ${i.name}` : i.name)).join('; ')
+  return title.length > MAX_TITLE_LENGTH ? `${title.slice(0, MAX_TITLE_LENGTH - 1)}…` : title
 }
 
 export type TransactionCategory = 'shopping' | 'transport' | 'coffee' | 'groceries' | 'dining' | 'subscriptions'
@@ -84,9 +100,8 @@ interface InterceptorState {
   financesError: string | null
   intensity: Intensity
 
-  cartItemName: string
-  cartItemPrice: number | null
-  cartItemImage: string | null
+  cart: CartItem[]
+  cartTotal: number | null
 
   isOpen: boolean
   verdictStatus: VerdictStatus
@@ -96,7 +111,7 @@ interface InterceptorState {
   purchaseState: 'idle' | 'saving' | 'done'
 
   applySettings: (settings: Settings) => void
-  openIntercept: (item: InterceptedItem) => void
+  openIntercept: (cart: InterceptedCart) => void
   applyEvaluation: (e: Evaluation) => void
   failEvaluation: () => void
   pushMessage: (role: ChatMessage['role'], content: string) => void
@@ -114,17 +129,18 @@ const CLOSING_LINE: Record<Intensity, string> = {
 }
 
 // Shown until the server's score arrives. No numbers: every figure on screen comes from the server.
-const pendingMessage = (s: InterceptorState, item: InterceptedItem) =>
-  `Checking "${item.name}" against your accounts… ${CLOSING_LINE[s.intensity]}`
+function pendingMessage(s: InterceptorState, cart: InterceptedCart) {
+  const what = cart.items.length === 1 ? `"${cart.items[0].name}"` : `these ${cart.items.length} items`
+  return `Checking ${what} against your accounts… ${CLOSING_LINE[s.intensity]}`
+}
 
 export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   finances: null,
   financesError: null,
   intensity: 'medium',
 
-  cartItemName: '',
-  cartItemPrice: null,
-  cartItemImage: null,
+  cart: [],
+  cartTotal: null,
 
   isOpen: false,
   verdictStatus: 'idle',
@@ -135,16 +151,15 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
 
   applySettings: (settings) => set({ intensity: settings.intensity }),
 
-  openIntercept: (item) =>
+  openIntercept: (cart) =>
     set({
       isOpen: true,
       verdictStatus: 'negotiating',
-      cartItemName: item.name,
-      cartItemPrice: item.price,
-      cartItemImage: item.imageUrl,
+      cart: cart.items,
+      cartTotal: cart.total,
       evaluation: null,
       finances: null,
-      financesError: item.price === null ? 'No price to score.' : null,
+      financesError: cart.total === null ? 'No price to score.' : null,
       isAgentTyping: false,
       purchaseState: 'idle',
       chatHistory: [
@@ -152,9 +167,9 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
           id: makeId(),
           role: 'agent',
           content:
-            item.price === null
+            cart.total === null
               ? "I couldn't read the price on this checkout page, so I can't score this purchase. The checkout stays paused."
-              : pendingMessage(get(), item),
+              : pendingMessage(get(), cart),
         },
       ],
     }),
@@ -185,18 +200,18 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   // SIMULATED: logs the purchase on the server so the ledger and next score reflect it. The checkout click
   // stays blocked, so no Amazon order is placed.
   simulatePurchase: async () => {
-    const { evaluation, purchaseState, cartItemName, cartItemPrice, pushMessage } = get()
-    if (!evaluation || cartItemPrice === null || purchaseState !== 'idle') return
+    const { evaluation, purchaseState, cart, cartTotal, pushMessage } = get()
+    if (!evaluation || cartTotal === null || purchaseState !== 'idle') return
     set({ purchaseState: 'saving' })
     try {
       const res = await callServer<{ snapshot: ServerSnapshot }>({
         type: 'purchase',
-        purchase: { title: cartItemName, price: cartItemPrice },
+        purchase: { title: cartTitle(cart), price: cartTotal },
       })
       set({ finances: fromSnapshot(res.snapshot), purchaseState: 'done' })
       pushMessage(
         'agent',
-        `Logged ${formatUsd(cartItemPrice)} as a simulated purchase. No order was placed. ` +
+        `Logged ${formatUsd(cartTotal)} as a simulated purchase. No order was placed. ` +
           'It now counts toward your spending, so your next check starts from here.',
       )
     } catch {
@@ -210,8 +225,8 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
 
   // Chat can explain the score but never change it: the reply is text only, and the verdict stays as evaluated.
   sendChat: async (text) => {
-    const { evaluation, isAgentTyping, cartItemName, cartItemPrice, pushMessage } = get()
-    if (!evaluation || cartItemPrice === null || isAgentTyping) return
+    const { evaluation, isAgentTyping, cart, cartTotal, pushMessage } = get()
+    if (!evaluation || cartTotal === null || isAgentTyping) return
     pushMessage('user', text)
     set({ isAgentTyping: true })
     const history = get().chatHistory.map((m) => ({
@@ -221,7 +236,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
     try {
       const res = await callServer<{ reply: string }>({
         type: 'chat',
-        purchase: { title: cartItemName, price: cartItemPrice },
+        purchase: { title: cartTitle(cart), price: cartTotal },
         history,
       })
       pushMessage('agent', res.reply)
