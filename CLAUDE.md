@@ -82,7 +82,7 @@
     *   `customers.py`: `list_customers()` and `select_customer(id)`, which rewrites `nessie_ids.json` (customer, checking, savings; the demo merchant carries over). Refuses a customer with no checking account.
     *   `decisions.py`: the per-customer decision log. `record(title, price, outcome, history)` stores `{ title, price, outcome: bought|walked_away, summary, timestamp }` (last 50), with `summary` from `llm.summarize_decision` (1-2 lines: what they did and their own stated reason; template fallback). `relevant(title)` returns up to 3 summaries for a similar item (word overlap ≥ 50% of the shorter title, `similar()`), newest first.
     *   `nessie.py`: thin client on one pooled `httpx.Client`. Errors are re-raised as `NessieError` without the URL, because the URL carries the API key; routes turn them into a 502. A trailing slash in `NESSIE_BASE` is stripped.
-    *   `llm.py`: `explain(facts)` and `chat(facts, title, history, final)`. Both pass only `public_facts` (price, balance_after, monthly_bills, budget_left_after, action) to Claude, through `_grounded_or`, which falls back to `template_message` when there's no key, the API errors, Claude refuses, `numbers_are_grounded` fails, or `mentions_internals` matches. The persona and per-verdict instructions live in `SYSTEM` / `CHAT_SYSTEM`.
+    *   `llm.py`: `explain(facts, intensity)` and `chat(facts, title, history, final, intensity)`. Prompts are built from `ROLE` + a persona from `PERSONAS` (the popup's Agent setting, saved per customer: light = The Gentle Nudge, medium = The Negotiator, harsh = The Interrogator) + `STANCE` + `INFORM` + `ANGLES` + `LINKING` (+ `CHAT_INSTRUCTIONS`, + `FINAL_TURN` on the last reply) + `RULES` (`system_prompt` / `chat_system_prompt`). Claude gets only `public_facts`: price, balance_after, monthly_bills, budget_left_after, action, `recent_purchases` (last 8 as `{ merchant, category, amount, when }`, with `when` written out by the server, e.g. "2 days ago"), `past_decisions`, and `angles_used` (not populated yet). Everything goes through `_grounded_or`, which falls back to a template when there's no key, the API errors, Claude refuses, `numbers_are_grounded` fails, or `mentions_internals` matches.
     *   `store.py`: reads/writes `data/state.json` (global: settings, `regret_penalty`, `blocks_this_week`, `ignored_nessie_purchases`; per customer under `customers[<customer_id>]`: linked `account_id`, `intensity`, `decisions`) and `data/commitments.json`, via temp file + rename. Both files are git-ignored. `reset_demo` restores defaults, which also clears every customer's decision log and links.
 *   **Endpoints:**
     *   `GET /health` → `{ ok: true, source }`, where `source` is `{ type: "nessie", customer_id, account_id, customer_name }` for the linked account (local files only, no Nessie call). The same `source` is in every snapshot, and the overlay shows it at the bottom of the left panel (`DataSourceBadge`).
@@ -132,7 +132,7 @@
 *   **Aware** (default, never blocks): drop ≥ 15 points or `score_after < 50` → `nudge`; otherwise `inform`.
 *   The user can always override.
 
-**Step 3: Claude wording (`llm.explain`).** Persona: a blunt but kind friend at checkout. Gets `public_facts` only, writes 2–3 plain sentences about bills, budget and balance: `inform` = "you're fine to buy this if you'd like" + one note on what it leaves, `nudge` = suggest sleeping on it, `block` = "this order is on hold" + one commitment question. Number guard, internals guard, template fallback (Rules 4–5).
+**Step 3: Claude wording (`llm.explain`).** A sharp, warm friend who argues the case against the purchase from the student's own money and history, in the persona the student picked. It picks the single strongest angle (already bought something similar, price vs. what's left, opportunity cost, want vs. need, why now, how a past purchase went, cost per use) and links the item to `recent_purchases` / `past_decisions` only when the facts support it. `inform` = "you're fine to buy this if you'd like" + one note, `nudge` = one real doubt, `block` = a clear position against it. Number guard, internals guard, template fallback (Rules 4–5).
 
 **Step 4: Chat (`llm.chat`, `POST /chat`).**
 *   Answers questions about this purchase in 1–3 sentences using the facts. It cannot approve, unblock or change the score, and says so when asked. It can't verify claims about how the item will be used.
@@ -179,7 +179,7 @@ server/                    # FastAPI backend (see 3.3)
   app.py score.py finances.py snapshot.py customers.py decisions.py demo_data.py nessie.py llm.py store.py
   data/                    # seed_data.json, nessie_ids.json (+ git-ignored state.json, commitments.json)
   scripts/                 # seed_nessie.py, reset_demo.py, nessie_customer.py, show_nessie.py
-  tests/                   # fake_nessie.py (in-memory Nessie), test_score.py, test_finances.py, test_purchases.py, test_chat.py, test_customers_and_memory.py, test_nessie_live.py
+  tests/                   # fake_nessie.py (in-memory Nessie), test_score.py, test_finances.py, test_purchases.py, test_chat.py, test_customers_and_memory.py, test_prompts.py, test_nessie_live.py
   .env.example             # copy to server/.env (git-ignored)
 ```
 Run from `extension/`:

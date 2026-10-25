@@ -3,6 +3,7 @@
 Run from server/:  uvicorn app:app --port 3001 --reload
 """
 
+import time
 from typing import Literal
 
 from dotenv import load_dotenv
@@ -123,9 +124,28 @@ def _snapshot_for_ui(snap: dict) -> dict:
     return {k: snap[k] for k in UI_SNAPSHOT_KEYS}
 
 
-def _with_memory(facts: dict, title: str) -> dict:
+RECENT_FOR_LLM = 8
+DAY_MS = 86_400_000
+
+
+def _when(ts: int, now_ms: int) -> str:
+    # Relative dates are written out here so Claude never has to compute one (and the number guard can check them).
+    days = max((now_ms - ts) // DAY_MS, 0)
+    return "today" if days == 0 else "yesterday" if days == 1 else f"{days} days ago"
+
+
+def _with_context(facts: dict, title: str, snap: dict) -> dict:
+    """Add what Claude needs to link this item to their history: recent purchases and past decisions."""
+    now_ms = int(time.time() * 1000)
+    recent = [{"merchant": t["merchant"], "category": t["category"], "amount": t["amount"], "when": _when(t["timestamp"], now_ms)}
+              for t in snap["transactions"][:RECENT_FOR_LLM]]
     past = decisions.relevant(title)
-    return {**facts, "past_decisions": past} if past else facts
+    return {**facts, "recent_purchases": recent, **({"past_decisions": past} if past else {})}
+
+
+def _intensity() -> str:
+    """The popup's Agent setting for the current customer: picks Claude's persona."""
+    return store.load_customer(finances.current_customer_id())["intensity"]
 
 
 @app.post("/evaluate")
@@ -133,8 +153,8 @@ def evaluate(purchase: Purchase, debug: bool = False):
     """The score and threshold stay server-side: the extension only gets the verdict and the wording.
     `?debug=true` adds the full facts (scores, components, floor) for development."""
     snap = get_financial_snapshot()
-    facts = _with_memory(score.evaluate(snap, purchase.model_dump(), store.load_state()), purchase.title)
-    body = {"action": facts["action"], "message": llm.explain(facts), "snapshot": _snapshot_for_ui(snap)}
+    facts = _with_context(score.evaluate(snap, purchase.model_dump(), store.load_state()), purchase.title, snap)
+    body = {"action": facts["action"], "message": llm.explain(facts, _intensity()), "snapshot": _snapshot_for_ui(snap)}
     return {**body, "debug": facts} if debug else body
 
 
@@ -150,8 +170,8 @@ def chat(req: ChatRequest):
     if not req.history or req.history[-1].role != "user":
         raise HTTPException(400, "history must end with a user message")
     # Recompute facts server-side so the client can't hand Claude made-up numbers.
-    facts = _with_memory(score.evaluate(get_financial_snapshot(), req.purchase.model_dump(), store.load_state()),
-                         req.purchase.title)
+    snap = get_financial_snapshot()
+    facts = _with_context(score.evaluate(snap, req.purchase.model_dump(), store.load_state()), req.purchase.title, snap)
     user_turns = sum(t.role == "user" for t in req.history)
     # The cap is never shown to the user: their last allowed reply gets a wrap-up that hands them the decision,
     # and `done` tells the overlay to close the chat. Anything past the cap gets the wrap-up without calling Claude.
@@ -159,7 +179,7 @@ def chat(req: ChatRequest):
         return {"reply": llm.closing_message(facts), "done": True}
     final = user_turns == MAX_USER_TURNS
     history = [t.model_dump() for t in req.history]
-    return {"reply": llm.chat(facts, req.purchase.title, history, final=final), "done": final}
+    return {"reply": llm.chat(facts, req.purchase.title, history, final=final, intensity=_intensity()), "done": final}
 
 
 def _checking_account(account_id: str) -> dict:
