@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Cell, Pie, PieChart, ResponsiveContainer, Sector, Tooltip } from 'recharts'
 import type { PieSectorShapeProps, TooltipContentProps, TooltipValueType } from 'recharts'
-import { formatPercent, formatUsd } from '../format'
+import { formatUsd, formatWholePercent, stackedPercents } from '../format'
 import { useInterceptorStore } from '../store'
 import { CHART_COLORS } from '../theme'
 import FinancesPlaceholder from './FinancesPlaceholder'
@@ -12,17 +12,17 @@ interface Slice {
   key: SliceKey
   label: string
   value: number
+  // Of the budget, from stackedPercents so the legend, tooltip and centre always add up.
+  percent: number | null
   color: string
 }
 
 const ACTIVE_GROW_PX = 6
 const DIMMED_OPACITY = 0.3
 
-type SliceTooltipProps = Pick<TooltipContentProps<TooltipValueType, string | number>, 'active' | 'payload'> & {
-  totalBudget: number
-}
+type SliceTooltipProps = Pick<TooltipContentProps<TooltipValueType, string | number>, 'active' | 'payload'>
 
-function SliceTooltip({ active, payload, totalBudget }: SliceTooltipProps) {
+function SliceTooltip({ active, payload }: SliceTooltipProps) {
   const slice = payload?.[0]?.payload as Slice | undefined
   if (!active || !slice) return null
   return (
@@ -30,7 +30,7 @@ function SliceTooltip({ active, payload, totalBudget }: SliceTooltipProps) {
       <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: slice.color }} />
       <span className="text-zinc-400">{slice.label}:</span>
       <span className="font-semibold tabular-nums text-zinc-100">{formatUsd(slice.value)}</span>
-      <span className="tabular-nums text-zinc-400">({formatPercent(slice.value, totalBudget)})</span>
+      <span className="tabular-nums text-zinc-400">({formatWholePercent(slice.percent)})</span>
     </div>
   )
 }
@@ -48,11 +48,15 @@ export default function BudgetDonut() {
   const remaining = Math.max(totalBudget - afterPurchase, 0)
   const overBy = Math.max(afterPurchase - totalBudget, 0)
 
+  // Spent + this purchase = the centre's "after purchase", and all three = 100% (more when over budget).
+  const [spentPct, purchasePct, remainingPct] = stackedPercents([spent, price, remaining], totalBudget) ?? []
+  const afterPct = spentPct === undefined || purchasePct === undefined ? null : spentPct + purchasePct
+
   // The purchase slice sits immediately after "spent" so it reads as the next chunk of the budget being eaten.
   const data: Slice[] = [
-    { key: 'spent', label: 'Spent this month', value: spent, color: CHART_COLORS.spent },
-    { key: 'purchase', label: 'This purchase', value: price, color: CHART_COLORS.purchase },
-    { key: 'remaining', label: 'Remaining', value: remaining, color: CHART_COLORS.neutral },
+    { key: 'spent', label: 'Spent this month', value: spent, percent: spentPct ?? null, color: CHART_COLORS.spent },
+    { key: 'purchase', label: 'This purchase', value: price, percent: purchasePct ?? null, color: CHART_COLORS.purchase },
+    { key: 'remaining', label: 'Remaining', value: remaining, percent: remainingPct ?? null, color: CHART_COLORS.neutral },
   ]
   const visible = data.filter((d) => d.value > 0)
 
@@ -97,7 +101,7 @@ export default function BudgetDonut() {
                 ))}
               </Pie>
               <Tooltip
-                content={(props) => <SliceTooltip {...props} totalBudget={totalBudget} />}
+                content={(props) => <SliceTooltip {...props} />}
                 cursor={false}
                 isAnimationActive={false}
                 wrapperStyle={{ zIndex: 10, outline: 'none' }}
@@ -111,7 +115,7 @@ export default function BudgetDonut() {
             }`}
           >
             <span className="text-2xl font-semibold tabular-nums text-zinc-100">
-              {formatPercent(afterPurchase, totalBudget)}
+              {formatWholePercent(afterPct)}
             </span>
             <span className="text-[11px] text-zinc-400">after purchase</span>
           </div>
@@ -137,7 +141,7 @@ export default function BudgetDonut() {
                 </span>
                 <span className="pl-[1.125rem] font-medium tabular-nums text-zinc-100">
                   {formatUsd(d.value)}
-                  <span className="ml-1.5 text-xs font-normal text-zinc-400">{formatPercent(d.value, totalBudget)}</span>
+                  <span className="ml-1.5 text-xs font-normal text-zinc-400">{formatWholePercent(d.percent)}</span>
                 </span>
               </li>
             )
