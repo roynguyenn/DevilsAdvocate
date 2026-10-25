@@ -2,8 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Injected into the shadow root via ?inline — :host is the overlay's document root. */
+/* Injected into the shadow root via ?inline — :host is the overlay's document root.
+   The host's inline `all: initial` overrides :host rules, so theme properties like
+   color-scheme belong on the overlay root element in App.tsx, not here. */
 :host {
-  color-scheme: light;
   font-size: 16px;
 }

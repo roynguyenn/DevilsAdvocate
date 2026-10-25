@@ -4,8 +4,9 @@ export default {
   theme: {
     extend: {
       colors: {
-        spent: '#2a78d6',
-        purchase: '#eb6834',
+        spent: '#3987e5',
+        purchase: '#d95926',
+        savings: '#199e70',
       },
     },
   },
