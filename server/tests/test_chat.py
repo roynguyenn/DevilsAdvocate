@@ -24,4 +24,4 @@ def test_chat_falls_back_without_api_key(monkeypatch):
     history = [{"role": "assistant", "content": "Score 89 -> 62."}, {"role": "user", "content": "Why?"}]
     r = client.post("/chat", json={"purchase": PURCHASE, "history": history})
     assert r.status_code == 200
-    assert r.json()["reply"].startswith("I can only speak to the numbers I have.")
+    assert r.json()["reply"].startswith("Here's where your money stands.")

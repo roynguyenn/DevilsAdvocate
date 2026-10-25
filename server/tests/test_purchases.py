@@ -23,7 +23,7 @@ def test_seed_ledger_sums_to_worked_example():
 
 
 def test_simulated_purchase_updates_ledger_spent_and_next_score():
-    first = client.post("/evaluate", json={"title": "Headphones", "price": 180}).json()
+    first = client.post("/evaluate?debug=true", json={"title": "Headphones", "price": 180}).json()["debug"]
     assert (first["score_before"], first["score_after"]) == (89, 62)
 
     r = client.post("/purchase", json={"title": "Headphones", "price": 180}).json()
@@ -31,9 +31,15 @@ def test_simulated_purchase_updates_ledger_spent_and_next_score():
     assert top["simulated"] is True and top["amount"] == 180
     assert r["snapshot"]["spent_this_month"] == 330
 
-    again = client.post("/evaluate", json={"title": "Headphones", "price": 180}).json()
+    again = client.post("/evaluate?debug=true", json={"title": "Headphones", "price": 180}).json()["debug"]
     assert again["score_before"] == first["score_after"]  # the logged purchase is now part of "before"
     assert again["score_after"] < first["score_after"]
+
+
+def test_evaluate_never_sends_the_score_to_the_extension():
+    body = client.post("/evaluate", json={"title": "Headphones", "price": 180}).json()
+    assert set(body) == {"action", "message", "snapshot"}
+    assert "score" not in body["message"].lower()
 
 
 def test_nessie_purchase_keeps_exact_price_from_description():

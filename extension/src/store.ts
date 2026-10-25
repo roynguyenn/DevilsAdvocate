@@ -41,12 +41,9 @@ export interface ServerSnapshot {
   transactions: Transaction[]
 }
 
-// Shape returned by the server's POST /evaluate (server/score.py evaluate() + message + snapshot).
+// Shape returned by the server's POST /evaluate. The score itself never leaves the server; only the verdict does.
 export interface Evaluation {
-  score_before: number
-  score_after: number
   action: 'inform' | 'nudge' | 'block'
-  mode: 'aware' | 'strict'
   message: string
   snapshot: ServerSnapshot
 }
@@ -167,14 +164,15 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
       chatHistory: [{ id: makeId(), role: 'agent', content: mockOpeningSalvo(get(), item) }],
     }),
 
-  // The server's deterministic score replaces the mock opening message once it arrives, and its snapshot
-  // replaces the mock budget/spent/ledger so the charts match the numbers the score used.
+  // The server's message replaces the mock opening once it arrives, and its snapshot replaces the mock
+  // budget/spent/ledger so the charts match the numbers the verdict used.
   applyEvaluation: (e) =>
     set({
       ...fromSnapshot(e.snapshot),
       evaluation: e,
       verdictStatus: e.action === 'block' ? 'blocked' : 'negotiating',
-      chatHistory: [{ id: makeId(), role: 'agent', content: `Score ${e.score_before} → ${e.score_after}. ${e.message}` }],
+      // The score stays internal (it only decides the verdict); the user sees the explanation alone.
+      chatHistory: [{ id: makeId(), role: 'agent', content: e.message }],
     }),
 
   // SIMULATED: logs the purchase on the server so the ledger and next score reflect it. The checkout click
@@ -203,7 +201,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   pushMessage: (role, content) =>
     set((s) => ({ chatHistory: [...s.chatHistory, { id: makeId(), role, content }] })),
 
-  // Chat can explain the score but never change it: the reply is text only, and the verdict stays as evaluated.
+  // Chat can explain the verdict but never change it: the reply is text only, and the verdict stays as evaluated.
   sendChat: async (text) => {
     const { evaluation, isAgentTyping, cartItemName, cartItemPrice, pushMessage } = get()
     if (!evaluation || isAgentTyping) return
@@ -221,7 +219,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
       })
       pushMessage('agent', res.reply)
     } catch {
-      pushMessage('agent', "I couldn't reach the server. The score above still stands.")
+      pushMessage('agent', "I couldn't reach the server. Nothing about this order has changed.")
     } finally {
       set({ isAgentTyping: false })
     }

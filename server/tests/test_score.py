@@ -66,6 +66,20 @@ def test_template_used_without_api_key(monkeypatch):
     assert llm.numbers_are_grounded(text, facts)
 
 
+def test_llm_never_sees_the_score_or_floor():
+    snapshot = {"balance": 1400, "bills_14d": 700, "spent_this_month": 150}
+    state = {"settings": {"budget": 400, "buffer_target": 300, "mode": "strict", "floor": 70}}
+    pub = llm.public_facts(score.evaluate(snapshot, {"price": 180}, state))
+    assert not {"score_before", "score_after", "components_after", "floor", "mode"} & set(pub)
+    assert pub["action"] == "block" and pub["balance_after"] == 1220
+
+
+def test_replies_mentioning_internals_are_rejected():
+    assert llm.mentions_internals("Your score drops below the floor.")
+    assert llm.mentions_internals("That falls under the threshold")
+    assert not llm.mentions_internals("You'd have $70 left in your budget with $700 of rent due.")
+
+
 def test_bills_due_within_window():
     today = date(2026, 10, 24)
     bills = [

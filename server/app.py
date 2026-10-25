@@ -82,10 +82,13 @@ def _snapshot_for_ui(snap: dict, state: dict) -> dict:
 
 
 @app.post("/evaluate")
-def evaluate(purchase: Purchase):
+def evaluate(purchase: Purchase, debug: bool = False):
+    """The score and threshold stay server-side: the extension only gets the verdict and the wording.
+    `?debug=true` adds the full facts (scores, components, floor) for development."""
     snap, state = get_financial_snapshot(), store.load_state()
     facts = score.evaluate(snap, purchase.model_dump(), state)
-    return {**facts, "message": llm.explain(facts), "snapshot": _snapshot_for_ui(snap, state)}
+    body = {"action": facts["action"], "message": llm.explain(facts), "snapshot": _snapshot_for_ui(snap, state)}
+    return {**body, "debug": facts} if debug else body
 
 
 @app.post("/purchase")

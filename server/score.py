@@ -82,6 +82,7 @@ def evaluate(snapshot: dict, purchase: dict, state: dict) -> dict:
         "score_after": after.total,
         "components_after": {k: round(v, 1) for k, v in asdict(after).items()},
         "price": purchase["price"],
+        "balance_after": round(snapshot["balance"] - purchase["price"], 2),
         "bills_14d": snapshot["bills_14d"],
         "bills_window_days": 14,
         "budget_left_after": round(settings["budget"] - snapshot["spent_this_month"] - purchase["price"], 2),

@@ -7,7 +7,7 @@ const LABELS = {
   done: 'Logged as simulated purchase',
 } as const
 
-// Lets the demo show what a purchase does to the ledger and the next score without placing a real order.
+// Lets the demo show what a purchase does to the ledger and the next check without placing a real order.
 export default function SimulatedBuyButton() {
   const hasEvaluation = useInterceptorStore((s) => s.evaluation !== null)
   const purchaseState = useInterceptorStore((s) => s.purchaseState)
