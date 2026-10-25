@@ -71,7 +71,7 @@
 *   **Layout:** routes in `app.py` stay thin (load state → call pure functions → save state).
     *   `score.py`: pure functions only (no I/O, LLM or randomness). `compute_components`, `decide`, `evaluate` (returns the "facts" dict).
     *   `snapshot.py`: `get_financial_snapshot()` is the only way anything reads finances. Returns `{ balance, bills_14d, spent_this_month, transactions }`.
-        *   `transactions` = seeded rows from `data/seed_snapshot.json` (they sum to $150, the worked example) + simulated purchases, newest first, latest 10. Each is `{ id, merchant, category, amount, timestamp (ms), simulated }`.
+        *   `transactions` = seeded rows from `data/seed_data.json` (they sum to $150, the worked example) + simulated purchases, newest first, latest 10. Each is `{ id, merchant, category, amount, timestamp (ms), simulated }`.
         *   `spent_this_month` = seeded rows + simulated purchases dated this month. `balance` = source balance − simulated purchases (neither source deducts them).
         *   `DATA_SOURCE=seed` (default): balance/bills from the seed file; simulated purchases in `data/purchases.json` (git-ignored).
         *   `DATA_SOURCE=nessie`: balance from the account in `data/nessie_ids.json`, bills = pending/recurring bills due in the next 14 days, simulated purchases = the account's Nessie purchases minus `ignored_nessie_purchases` in `state.json`.
@@ -158,7 +158,7 @@ extension/                 # Manifest V3 extension + React overlay (Vite + CRXJS
     components/            # BudgetDonut, IncomeAllocation, AllocationBar (shared w/ popup), RecentLedger, ChatPanel, SimulatedBuyButton, DataSourceBadge
 server/                    # FastAPI backend (see 3.3)
   app.py score.py snapshot.py nessie.py llm.py store.py
-  data/                    # seed_snapshot.json, nessie_ids.json (+ git-ignored state.json, commitments.json, purchases.json)
+  data/                    # seed_data.json, nessie_ids.json (+ git-ignored state.json, commitments.json, purchases.json)
   scripts/                 # seed_nessie.py, reset_demo.py, nessie_customer.py, show_nessie.py
   tests/                   # test_score.py, test_chat.py, test_purchases.py
   .env.example             # copy to server/.env (git-ignored)

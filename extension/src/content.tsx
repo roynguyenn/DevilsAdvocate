@@ -34,9 +34,28 @@ function mountOverlay() {
   createRoot(container).render(<App />)
 }
 
+const MONEY = /\$\s?(\d[\d,]*(?:\.\d{1,2})?)/
+
+// First dollar amount in the text. Stripping every non-digit instead would glue "$179.99 $14.40" into 179.9914.
 const parsePrice = (text: string | null | undefined) => {
-  const n = parseFloat((text ?? '').replace(/[^0-9.]/g, ''))
+  const m = (text ?? '').match(MONEY)
+  const n = m ? parseFloat(m[1].replace(/,/g, '')) : NaN
   return Number.isFinite(n) && n > 0 ? n : null
+}
+
+// Amount on the order-summary row whose label matches, whatever classes Amazon currently uses: find the label's
+// text node, then climb to the nearest ancestor (the row) that also contains a dollar amount.
+function priceByLabel(label: RegExp) {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!label.test(node.textContent?.trim() ?? '')) continue
+    let el = node.parentElement
+    for (let depth = 0; el && depth < 4; depth++, el = el.parentElement) {
+      const price = parsePrice(el.textContent)
+      if (price !== null) return price
+    }
+  }
+  return null
 }
 
 const firstText = (selectors: string[]) => {
@@ -56,21 +75,33 @@ const firstImage = (selectors: string[]) => {
   return null
 }
 
-// Best-effort scrape of the checkout page; falls back to the store's mock item when Amazon's markup shifts.
+// The goods being bought: the order summary's item subtotal ("Items (2):") before shipping and tax, then
+// the line-item price, and only then the grand total.
+function scrapePrice() {
+  return (
+    priceByLabel(/^Items(\s*\(\d+\))?\s*:?$/i) ??
+    parsePrice(firstText(['.lineitem-price-text', '[data-csa-c-content-id*="item-price"]', '.item-price'])) ??
+    parsePrice(
+      firstText(['.grand-total-price', '#subtotals-marketplace-table .a-color-price', '.order-summary-grand-total .a-text-right']),
+    ) ??
+    priceByLabel(/^Order total\s*:?$/i)
+  )
+}
+
+// Best-effort scrape of the checkout page. A missing price stays null (the overlay says so); a missing title gets
+// a neutral label.
 function scrapeCheckout(): InterceptedItem {
-  const fallback = useInterceptorStore.getState()
   const name = firstText([
     '.lineitem-title-text',
     '[data-csa-c-content-id*="item-title"]',
     '.item-title',
     '.a-row.breakword .a-text-bold',
   ])
-  const price = parsePrice(
-    firstText(['.grand-total-price', '#subtotals-marketplace-table .a-color-price', '.order-summary-grand-total .a-text-right']),
-  )
+  const price = scrapePrice()
+  if (price === null) console.warn('[devils-advocate] no price found on the checkout page')
   return {
-    name: name ?? fallback.cartItemName,
-    price: price ?? fallback.cartItemPrice,
+    name: name ?? 'Your Amazon order',
+    price,
     imageUrl: firstImage(['.lineitem-image img', '[data-csa-c-content-id*="item-image"] img', '.item-image img']),
   }
 }
@@ -118,11 +149,16 @@ function intercept(e: Event) {
   requestEvaluation(item)
 }
 
-// If the server is down the overlay keeps the mock message, so the lock still holds.
+// If the server or the bank is down the overlay says so and the lock still holds.
 function requestEvaluation(item: InterceptedItem) {
+  // No price, nothing to score: the overlay already says so and the lock holds.
+  if (item.price === null) return
   callServer<Evaluation>({ type: 'evaluate', purchase: { title: item.name, price: item.price } })
     .then((e) => useInterceptorStore.getState().applyEvaluation(e))
-    .catch((err: Error) => console.warn('[devils-advocate] evaluate failed:', err.message))
+    .catch((err: Error) => {
+      console.warn('[devils-advocate] evaluate failed:', err.message)
+      useInterceptorStore.getState().failEvaluation()
+    })
 }
 
 // Capture-phase delegation on window: runs before Amazon's own handlers and survives the
@@ -142,7 +178,7 @@ function onSubmit(e: SubmitEvent) {
 
 function init() {
   loadSettings().then(applySettings, () => {
-    // Storage unreadable: keep intercepting with mock data rather than letting the order through.
+    // Storage unreadable: keep intercepting rather than letting the order through.
     interceptorActive = true
   })
   onSettingsChanged(applySettings)

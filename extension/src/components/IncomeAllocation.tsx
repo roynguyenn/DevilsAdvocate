@@ -2,23 +2,34 @@ import { formatUsd } from '../format'
 import { useInterceptorStore } from '../store'
 import { ALLOCATION_COLORS } from '../theme'
 import AllocationBar from './AllocationBar'
+import FinancesPlaceholder from './FinancesPlaceholder'
 
+const HEADING = <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Income &amp; Allocation</h3>
+
+// Income split as the bank (Nessie, via the server) holds it, which is what the popup saved there.
 export default function IncomeAllocation() {
-  const income = useInterceptorStore((s) => s.monthlyIncome)
-  const fixedBills = useInterceptorStore((s) => s.fixedBills)
-  const savings = useInterceptorStore((s) => s.savings)
-  const discretionary = useInterceptorStore((s) => s.totalBudget)
+  const finances = useInterceptorStore((s) => s.finances)
 
+  if (!finances) {
+    return (
+      <section className="flex flex-col gap-3" aria-label="Income and allocation">
+        {HEADING}
+        <FinancesPlaceholder className="h-16" />
+      </section>
+    )
+  }
+
+  const income = finances.monthlyIncome
   const segments = [
-    { key: 'bills', label: 'Fixed bills', value: fixedBills, color: ALLOCATION_COLORS.fixedBills },
-    { key: 'savings', label: 'Savings', value: savings, color: ALLOCATION_COLORS.savings },
-    { key: 'discretionary', label: 'Discretionary', value: discretionary, color: ALLOCATION_COLORS.discretionary },
+    { key: 'bills', label: 'Fixed bills', value: finances.fixedBills, color: ALLOCATION_COLORS.fixedBills },
+    { key: 'savings', label: 'Savings', value: finances.savings, color: ALLOCATION_COLORS.savings },
+    { key: 'discretionary', label: 'Discretionary', value: finances.budget, color: ALLOCATION_COLORS.discretionary },
   ]
 
   return (
     <section className="flex flex-col gap-3" aria-label="Income and allocation">
       <div className="flex items-baseline justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Income &amp; Allocation</h3>
+        {HEADING}
         <p className="text-right">
           <span className="text-lg font-semibold tabular-nums text-zinc-100">{formatUsd(income)}</span>
           <span className="ml-1 text-xs text-zinc-400">/ mo</span>

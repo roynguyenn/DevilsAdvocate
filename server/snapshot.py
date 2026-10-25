@@ -31,7 +31,7 @@ def _now_ms() -> int:
 
 
 def _seed() -> dict:
-    return json.loads((DATA_DIR / "seed_snapshot.json").read_text())
+    return json.loads((DATA_DIR / "seed_data.json").read_text())
 
 
 def _seed_transactions(seed: dict) -> list[dict]:

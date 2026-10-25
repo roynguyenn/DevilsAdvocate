@@ -1,16 +1,11 @@
+import { callServer } from '../api'
 import type { LinkedAccount } from '../settings'
 
-// Simulated Capital One (Nessie) OAuth. The real flow runs through the backend, which holds the Nessie
-// key and returns only account display metadata — the extension must never collect or store credentials.
+// Capital One (Nessie) account linking. The backend holds the Nessie key and returns only display metadata
+// ({ id, nickname, last4 }) for the demo customer's checking accounts; the extension never sees credentials.
 
-const MOCK_ACCOUNTS: LinkedAccount[] = [
-  { id: 'nessie-checking-1234', nickname: 'Checking', last4: '1234' },
-  { id: 'nessie-savings-5678', nickname: 'Savings', last4: '5678' },
-  { id: 'nessie-credit-9012', nickname: 'Quicksilver Credit Card', last4: '9012' },
-]
+export const fetchAuthorizableAccounts = () => callServer<LinkedAccount[]>({ type: 'accounts' })
 
-const simulateLatency = <T>(value: T, ms = 700) => new Promise<T>((resolve) => setTimeout(() => resolve(value), ms))
-
-export const fetchAuthorizableAccounts = () => simulateLatency(MOCK_ACCOUNTS, 500)
-
-export const authorizeAccount = (account: LinkedAccount) => simulateLatency(account)
+// The sign-in step is simulated: Nessie has no OAuth, so authorizing just confirms the choice after a beat.
+export const authorizeAccount = (account: LinkedAccount) =>
+  new Promise<LinkedAccount>((resolve) => setTimeout(() => resolve(account), 700))

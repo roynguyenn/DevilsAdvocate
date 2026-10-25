@@ -4,6 +4,7 @@ import type { PieSectorShapeProps, TooltipContentProps, TooltipValueType } from 
 import { formatPercent, formatUsd } from '../format'
 import { useInterceptorStore } from '../store'
 import { CHART_COLORS } from '../theme'
+import FinancesPlaceholder from './FinancesPlaceholder'
 
 type SliceKey = 'spent' | 'purchase' | 'remaining'
 
@@ -35,11 +36,13 @@ function SliceTooltip({ active, payload, totalBudget }: SliceTooltipProps) {
 }
 
 export default function BudgetDonut() {
-  const totalBudget = useInterceptorStore((s) => s.totalBudget)
-  const spent = useInterceptorStore((s) => s.spent)
-  const price = useInterceptorStore((s) => s.cartItemPrice)
+  const finances = useInterceptorStore((s) => s.finances)
+  const price = useInterceptorStore((s) => s.cartItemPrice) ?? 0
   // Index into `visible`; drives the expanded slice, dimming of the others, and legend highlight.
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
+
+  if (!finances) return <FinancesPlaceholder className="h-44" />
+  const { budget: totalBudget, spent } = finances
 
   const afterPurchase = spent + price
   const remaining = Math.max(totalBudget - afterPurchase, 0)

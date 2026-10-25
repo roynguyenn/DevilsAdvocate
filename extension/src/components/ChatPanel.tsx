@@ -29,6 +29,7 @@ export default function ChatPanel() {
   const chatHistory = useInterceptorStore((s) => s.chatHistory)
   const close = useInterceptorStore((s) => s.close)
   const hasEvaluation = useInterceptorStore((s) => s.evaluation !== null)
+  const hasPrice = useInterceptorStore((s) => s.cartItemPrice !== null)
   const isAgentTyping = useInterceptorStore((s) => s.isAgentTyping)
   const chatClosed = useInterceptorStore((s) => s.chatClosed)
   const sendChat = useInterceptorStore((s) => s.sendChat)
@@ -36,12 +37,14 @@ export default function ChatPanel() {
   const [draft, setDraft] = useState('')
 
   // No reply counter on purpose: a visible countdown invites bargaining to the last message.
-  const canSend = hasEvaluation && !isAgentTyping && !chatClosed
-  const placeholder = !hasEvaluation
-    ? 'Waiting for the server…'
-    : chatClosed
-      ? 'Time to decide.'
-      : 'Ask about this purchase…'
+  const canSend = hasPrice && hasEvaluation && !isAgentTyping && !chatClosed
+  const placeholder = !hasPrice
+    ? 'No price to score, so there is nothing to discuss.'
+    : !hasEvaluation
+      ? 'Waiting for the server…'
+      : chatClosed
+        ? 'Time to decide.'
+        : 'Ask about this purchase…'
 
   const submit = (e: FormEvent | KeyboardEvent) => {
     e.preventDefault()

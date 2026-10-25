@@ -81,6 +81,7 @@ function SaveBar() {
   const section = usePopupStore((s) => s.section)
   const saving = usePopupStore((s) => s.saving)
   const justSaved = usePopupStore((s) => s.justSaved)
+  const saveError = usePopupStore((s) => s.saveError)
   const canEnable = usePopupStore(selectCanEnable)
   const save = usePopupStore((s) => s.save)
   const setSection = usePopupStore((s) => s.setSection)
@@ -101,7 +102,11 @@ function SaveBar() {
         {justSaved ? 'Interceptor active' : isActive ? 'Save Changes' : 'Save & Activate Interceptor'}
       </button>
       <p className="mt-1.5 min-h-[1rem] text-center text-[11px] text-zinc-400" aria-live="polite">
-        {blocker ? (
+        {saveError ? (
+          <span className="text-red-300" role="alert">
+            {saveError}
+          </span>
+        ) : blocker ? (
           blocker.section === section ? (
             blocker.message
           ) : (
