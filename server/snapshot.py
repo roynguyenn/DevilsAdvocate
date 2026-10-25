@@ -8,12 +8,12 @@ data/purchases.json; in Nessie mode they're created on the demo account.
 """
 
 import json
-import os
 import time
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import money_plan
 import nessie
 import store
 
@@ -77,8 +77,8 @@ def _local_purchases() -> list[dict]:
     return json.loads(LOCAL_PURCHASES.read_text()) if LOCAL_PURCHASES.exists() else []
 
 
-def _nessie_ids() -> dict:
-    return json.loads((DATA_DIR / "nessie_ids.json").read_text())
+_nessie_ids = money_plan.nessie_ids
+_source = money_plan.data_source
 
 
 def _nessie_purchases(account_id: str) -> list[dict]:
@@ -105,10 +105,6 @@ def _assemble(balance: float, bills_14d: float, seeded: list[dict], purchases: l
     }
 
 
-def _source() -> str:
-    return os.getenv("DATA_SOURCE", "seed")
-
-
 def describe_source() -> dict:
     """Which data the server is reading, for dev display. Reads local files only (no Nessie call)."""
     if _source() != "nessie":
@@ -118,18 +114,31 @@ def describe_source() -> dict:
             "customer_name": f"Test {ids.get('last_name', '')}".strip()}
 
 
+def _with_plan(snap: dict, plan: dict, seed: dict) -> dict:
+    # Until the user saves a plan in the popup, the seed defaults stand in (they keep the worked example).
+    if not plan["saved"]:
+        d = seed["plan_defaults"]
+        plan = money_plan.make_plan(d["monthly_income"], d["fixed_bills"], d["savings"], saved=False)
+    return {**snap, "monthly_income": plan["monthly_income"], "monthly_bills": plan["fixed_bills"],
+            "savings": plan["savings"], "budget": plan["discretionary"], "plan_saved": plan["saved"]}
+
+
 def get_financial_snapshot() -> dict:
-    """Returns {balance, bills_14d, spent_this_month, transactions, source}. Money is dollars."""
+    """Returns {balance, bills_14d, spent_this_month, transactions, monthly_income, monthly_bills, savings,
+    budget, plan_saved, source}. Money is dollars; budget is the discretionary part of the monthly plan."""
     seed = _seed()
     seeded = _seed_transactions(seed)
     if _source() == "nessie":
         account_id = _nessie_ids()["account_id"]
         balance = nessie.get_account(account_id)["balance"]
-        bills = bills_due_within(nessie.get_bills(account_id), date.today())
-        snap = _assemble(balance, bills, seeded, _nessie_purchases(account_id))
+        all_bills = nessie.get_bills(account_id)
+        real_bills = [b for b in all_bills if not money_plan.is_profile_bill(b)]
+        snap = _assemble(balance, bills_due_within(real_bills, date.today()), seeded, _nessie_purchases(account_id))
+        plan = money_plan.plan_from_records(all_bills, nessie.get_deposits(account_id))
     else:
         snap = _assemble(seed["balance"], seed["bills_14d"], seeded, _local_purchases())
-    return {**snap, "source": describe_source()}
+        plan = money_plan.read_plan(money_plan.SEED_ACCOUNT["id"])
+    return {**_with_plan(snap, plan, seed), "source": describe_source()}
 
 
 def record_simulated_purchase(title: str, price: float) -> None:

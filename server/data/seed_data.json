@@ -2,6 +2,8 @@
   "_note": "Fake demo data. The transactions sum to $150 spent this month, so a $180 item scores 89 -> 62 (the brief's worked example). days_ago is relative to today.",
   "balance": 1400,
   "bills_14d": 700,
+  "_plan_note": "Used until the user saves their own plan in the popup. 2000 - 1200 - 400 leaves a $400 discretionary budget.",
+  "plan_defaults": {"monthly_income": 2000, "fixed_bills": 1200, "savings": 400},
   "transactions": [
     {"merchant": "Amazon.com", "category": "shopping", "amount": 45.20, "days_ago": 1},
     {"merchant": "Uber", "category": "transport", "amount": 18.50, "days_ago": 1},

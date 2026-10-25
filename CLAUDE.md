@@ -32,7 +32,7 @@
 *   **Service Worker (`src/background.ts`):** Proxies every backend call (content scripts on https pages can't reliably fetch `http://localhost`). Callers use `callServer()` from `src/api.ts`, which sends a typed `ServerRequest` message (`evaluate`, `chat` or `purchase`) and resolves with the server's JSON. No auth session yet.
 
 ### 3.2 Frontend (React UI)
-*   **State:** Use a single `Zustand` store for charts, chat history, and verdict state. It holds a mock snapshot (`monthlyIncome`, `fixedBills`, `totalBudget` = discretionary budget, `spent`, `daysUntilPayday`, `ledger`); savings is derived (`selectSavings` = income − fixed bills − discretionary). The server's result lives in `evaluation` (set by `applyEvaluation`), which also replaces `totalBudget`, `spent` and `ledger` with the server's snapshot so the donut and Recent Ledger match the score. The mock values only show until the server answers. `monthlyIncome`, `fixedBills`, `savings` and `intensity` come from the popup's saved settings (`applySettings`). **Known gap:** the popup's Discretionary amount and the server's `settings.budget` are two separate budgets. The popup fills `totalBudget` first, then `applyEvaluation` overwrites it with the server's budget, so the score ignores what the user typed. Fix: have the popup `PUT /settings` on save (discretionary → `budget`).
+*   **State:** Use a single `Zustand` store for charts, chat history, and verdict state. The left panel's numbers live in `finances` (`monthlyIncome`, `fixedBills`, `savings`, `budget` = discretionary, `spent`, `ledger`), which is **only ever filled from the server's snapshot** (`applyEvaluation`, `simulatePurchase`); until then it's `null` and the charts show a placeholder (`financesError` says why: no price on the page, or server/bank down). No mock numbers. `intensity` comes from the popup's saved settings (`applySettings`); `dataSource` from each snapshot.
 *   **Theme:** Dark overlay (see 7. Code Style → Styling for the exact palette).
 *   **Animations:** Use `Framer Motion` for a smooth slide-in/fade-in of the overlay.
 *   **Layout:** Two-panel split view sliding in from the right (stacks vertically below the `md` breakpoint).
@@ -53,7 +53,8 @@
 *   Fixed 440×600 page (Chrome's popup maximum height is 600px), same dark tokens as the overlay. The header has an **Enabled/Disabled switch** (see below). Below it, a tab bar (**1 Account · 2 Finances · 3 Agent**) shows **one section at a time**, each tab with a completion check (green) or a needs-attention dot (amber). Tabs follow the WAI-ARIA pattern (`role="tab"`, arrow-key navigation). The save bar stays pinned to the bottom.
 *   **No scrolling:** each section must fit the panel area (≈384px between the tabs and the save bar). Check `main.scrollHeight <= clientHeight` when changing a section's content.
 *   **Navigation:** the popup opens on the first incomplete section. Linking a bank during first-time setup moves on to Finances. When saving is blocked by a field on another tab, the hint under the save button links to that tab.
-*   **Account Connection:** an amber "Connect Bank Account" button opens a simulated Capital One / Nessie OAuth modal (`src/api/bank.ts`, mock accounts). Once linked, it shows a green "Linked: <nickname> ending in ****1234" with a Disconnect link. **Never** add a credential or API-key field: the real flow goes through the backend, and the extension stores only `{ id, nickname, last4 }`.
+*   **Account Connection:** an amber "Connect Bank Account" button opens a Capital One / Nessie link modal. The account list comes from the server (`GET /accounts`, via `src/api/bank.ts`); the sign-in step itself is simulated (Nessie has no OAuth). Once linked, it shows a green "Linked: <nickname> ending in ****1234" with a Disconnect link, and an empty Finances tab is prefilled from `GET /profile`. **Never** add a credential or API-key field: the extension stores only `{ id, nickname, last4 }`.
+*   **Save & Activate** sends the Finances tab to `PUT /profile` (the bank is the source of truth) and stores what the server returns. A server/bank error shows in the save bar. Opening the popup refreshes from `GET /profile`.
 *   **Financial Baseline & Allocation (Finances tab):** a large monthly net income input, a live `AllocationBar` preview, and a currency input plus slider for Fixed Bills (gray), Savings (green) and Discretionary (blue).
     *   **Rebalancing:** editing income, fixed bills or savings auto-fills discretionary with the remainder. A manual discretionary override rebalances **savings only**; fixed bills are real obligations and never move automatically.
     *   **Validation:** math is done in whole cents. Over-allocation shows a hatched red tail on the bar and blocks saving.
@@ -70,7 +71,8 @@
 ### 3.3 Backend (`server/`, FastAPI)
 *   **Layout:** routes in `app.py` stay thin (load state → call pure functions → save state).
     *   `score.py`: pure functions only (no I/O, LLM or randomness). `compute_components`, `decide`, `evaluate` (returns the "facts" dict).
-    *   `snapshot.py`: `get_financial_snapshot()` is the only way anything reads finances. Returns `{ balance, bills_14d, spent_this_month, transactions }`.
+    *   `snapshot.py`: `get_financial_snapshot()` is the only way anything reads finances. Returns `{ balance, bills_14d, spent_this_month, transactions, monthly_income, monthly_bills, savings, budget, plan_saved, source }`. `budget` is the plan's discretionary amount, and it's the budget the score uses (`app._facts`). Until a plan is saved, `plan_defaults` in `data/seed_data.json` stand in (2000 / 1200 / 400 → $400, keeping the worked example). `bills_14d` counts real bills only, never the plan's `PROFILE` bills.
+    *   `money_plan.py`: the monthly plan and linkable accounts. Seed mode keeps the plan in `state.json`; Nessie mode stores it on the linked account as tagged objects: a deposit `PROFILE income | <exact amount>`, recurring bills `PROFILE fixed bills` and `PROFILE savings`. Discretionary is never stored (always income − fixed − savings). Saving deletes the old tagged objects and creates new ones, and points `nessie_ids.json` at the linked account.
         *   `transactions` = seeded rows from `data/seed_data.json` (they sum to $150, the worked example) + simulated purchases, newest first, latest 10. Each is `{ id, merchant, category, amount, timestamp (ms), simulated }`.
         *   `spent_this_month` = seeded rows + simulated purchases dated this month. `balance` = source balance − simulated purchases (neither source deducts them).
         *   `DATA_SOURCE=seed` (default): balance/bills from the seed file; simulated purchases in `data/purchases.json` (git-ignored).
@@ -84,9 +86,13 @@
     *   `POST /evaluate` `{ title, price, quantity?, category? }` → `{ action, message, snapshot }`, where `snapshot` is `{ budget, spent_this_month, balance, transactions, source }` for the UI. `?debug=true` adds `debug` with the full facts (`score_before`, `score_after`, `components_after`, `floor`, …) for development; the extension never asks for it.
     *   `POST /purchase` `{ title, price }` → `{ snapshot }`. **SIMULATED** "Buy anyway": records a fake purchase so the ledger and the next score reflect it. Nothing is ordered anywhere.
     *   `POST /chat` `{ purchase, history: [{ role: user|assistant, content }] }` → `{ reply, done }`. History must end with a user turn. On the user's `MAX_USER_TURNS`th (3rd) reply, Claude gets `llm.FINAL_TURN`: sum up, hand them the decision (buy anyway or walk away), no question, never mention a limit; the response has `done: true`. More than 3 user turns returns `llm.closing_message` with `done: true` without calling Claude. Facts are recomputed server-side, never taken from the client.
-    *   `GET|PUT /settings` `{ budget, buffer_target, mode: aware|strict, floor }`.
+    *   `GET /accounts` → `[{ id, nickname, last4 }]`: the demo customer's Checking accounts (seed mode: one fake account).
+    *   `GET /profile?account_id=` → `{ account, monthly_income, fixed_bills, savings, discretionary }` (zeros if never saved; 404 for an account not in `/accounts`).
+    *   `PUT /profile` `{ account_id, monthly_income, fixed_bills, savings, discretionary? }` → same shape. Discretionary from the client is ignored and recomputed. Impossible plans (income ≤ 0, negatives, fixed + savings > income) → 400 with a readable `detail`.
+    *   Any Nessie failure → 502 `{ detail: "Couldn't reach the bank (Nessie)…" }`, which the extension shows.
+    *   `GET|PUT /settings` `{ budget, buffer_target, mode: aware|strict, floor }`. `budget` here is overridden by the plan's discretionary when scoring.
     *   Stubs (TODO): `POST /commit`, `GET /followups`, `POST /outcome`, `POST /demo/skip-week`.
-*   **Planned, not built:** a richer snapshot for the UI (`monthly_income`, `fixed_bills`, `days_until_payday`, `recent_transactions` for the Recent Ledger: latest ~10 Nessie `/purchases`, each `{ id, merchant, category, amount, timestamp }`, with `category` one of `shopping | transport | coffee | groceries | dining | subscriptions` to match `TransactionCategory` in `extension/src/store.ts`); signed unblock tokens; SSE streaming.
+*   **Planned, not built:** merchant categories for Nessie purchases in the Recent Ledger (currently every simulated purchase is `shopping`); signed unblock tokens; SSE streaming.
 
 ### 3.4 Capital One Nessie Integration
 *   **Base URL:** `https://prod-api.nessieisreal.com` (set by `NESSIE_BASE`). Auth via `?key=` from `NESSIE_KEY` in `server/.env`. Everyone shares one sandbox, so use unique fake names and no real data.
@@ -130,7 +136,7 @@ Done: overlay UI, interception, service-worker proxy, score engine + tests, seed
 Next, roughly in order:
 1.  "Sleep on it" and "Make a commitment" buttons, and a settings UI (mode, floor, budget, buffer).
 2.  `/commit`, `/followups`, `/outcome`, `/demo/skip-week`, so the same cart shows a changed score after a follow-up.
-3.  Drive the Income & Allocation card from server data (needs monthly income and fixed bills in the snapshot).
+3.  Seed realistic Nessie purchases across ledger categories, so the Recent Ledger isn't mostly seed rows.
 4.  Polish: score gauge, cooldown, streaming.
 
 ---
@@ -157,10 +163,10 @@ extension/                 # Manifest V3 extension + React overlay (Vite + CRXJS
     index.css              # Tailwind entry, injected into the shadow root via ?inline
     components/            # BudgetDonut, IncomeAllocation, AllocationBar (shared w/ popup), RecentLedger, ChatPanel, SimulatedBuyButton, DataSourceBadge
 server/                    # FastAPI backend (see 3.3)
-  app.py score.py snapshot.py nessie.py llm.py store.py
+  app.py score.py snapshot.py money_plan.py nessie.py llm.py store.py
   data/                    # seed_data.json, nessie_ids.json (+ git-ignored state.json, commitments.json, purchases.json)
   scripts/                 # seed_nessie.py, reset_demo.py, nessie_customer.py, show_nessie.py
-  tests/                   # test_score.py, test_chat.py, test_purchases.py
+  tests/                   # test_score.py, test_chat.py, test_purchases.py, test_money_plan.py
   .env.example             # copy to server/.env (git-ignored)
 ```
 Run from `extension/`:
