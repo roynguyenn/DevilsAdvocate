@@ -23,8 +23,10 @@ export function stackedPercents(parts: number[], whole: number): number[] | null
 export const formatWholePercent = (percent: number | null | undefined) => (percent == null ? '—' : `${percent}%`)
 
 export function formatTimeAgo(timestamp: number, now = Date.now()) {
-  const hours = Math.max(Math.floor((now - timestamp) / 3_600_000), 0)
-  if (hours < 1) return 'just now'
+  const minutes = Math.max(Math.floor((now - timestamp) / 60_000), 0)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours} ${hours === 1 ? 'hr' : 'hrs'} ago`
   const days = Math.floor(hours / 24)
   return `${days} ${days === 1 ? 'day' : 'days'} ago`

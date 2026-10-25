@@ -1,4 +1,5 @@
 import { Car, Coffee, ShoppingBag, ShoppingBasket, Tv, Utensils, type LucideIcon } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { formatTimeAgo, formatUsd } from '../format'
 import { useInterceptorStore, type TransactionCategory } from '../store'
 import FinancesPlaceholder from './FinancesPlaceholder'
@@ -14,6 +15,13 @@ const CATEGORY_ICONS: Record<TransactionCategory, LucideIcon> = {
 
 export default function RecentLedger() {
   const ledger = useInterceptorStore((s) => s.finances?.ledger)
+  const noBank = useInterceptorStore((s) => s.dataSource?.type === 'manual')
+  // Ticks once a minute so "3m ago" keeps counting while the overlay stays open.
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000)
+    return () => clearInterval(id)
+  }, [])
 
   return (
     <section className="flex flex-1 flex-col gap-3" aria-label="Recent ledger">
@@ -21,7 +29,11 @@ export default function RecentLedger() {
       {!ledger ? (
         <FinancesPlaceholder className="min-h-[8rem] flex-1" />
       ) : ledger.length === 0 ? (
-        <p className="text-sm text-zinc-500">No purchases on this account yet.</p>
+        <p className="text-sm text-zinc-500">
+          {noBank
+            ? 'Link a bank account in the extension popup to see your transaction history.'
+            : 'No purchases on this account yet.'}
+        </p>
       ) : (
         // Grows with its rows up to about six, then scrolls. A max height, not min-h-0 on the card, so the
         // card always contains the list instead of letting rows spill past its border.
@@ -35,7 +47,7 @@ export default function RecentLedger() {
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-zinc-100">{t.merchant}</p>
-                  <p className="text-xs text-zinc-400">{formatTimeAgo(t.timestamp)}</p>
+                  <p className="text-xs text-zinc-400">{formatTimeAgo(t.timestamp, now)}</p>
                 </div>
                 <span className="text-sm font-medium tabular-nums text-zinc-100">−{formatUsd(t.amount)}</span>
               </li>
