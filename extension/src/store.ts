@@ -35,6 +35,9 @@ export function cartTitle(items: CartItem[]) {
   return title.length > MAX_TITLE_LENGTH ? `${title.slice(0, MAX_TITLE_LENGTH - 1)}…` : title
 }
 
+// Identifies one conversation: the same items at the same total resume it; any change to the order starts over.
+export const cartKey = (cart: InterceptedCart) => `${cart.total}|${cartTitle(cart.items)}`
+
 export type TransactionCategory = 'shopping' | 'transport' | 'coffee' | 'groceries' | 'dining' | 'subscriptions'
 
 // Mirrors a Nessie /purchases record after the backend maps merchant_id → name/category.
@@ -112,6 +115,10 @@ interface InterceptorState {
   cartTotalIsFinal: boolean
 
   isOpen: boolean
+  // The open conversation's cart (cartKey). Lives only in page memory, so a reload starts a new chat.
+  sessionKey: string | null
+  // True while /evaluate is in flight, so reopening mid-request waits for it instead of asking again.
+  evaluating: boolean
   verdictStatus: VerdictStatus
   chatHistory: ChatMessage[]
   evaluation: Evaluation | null
@@ -125,8 +132,10 @@ interface InterceptorState {
   applySettings: (settings: Settings) => void
   setTestMode: (on: boolean) => void
   openIntercept: (cart: InterceptedCart) => void
-  applyEvaluation: (e: Evaluation) => void
-  failEvaluation: () => void
+  canResume: (key: string) => boolean
+  reopenIntercept: () => void
+  applyEvaluation: (e: Evaluation, key: string) => void
+  failEvaluation: (key: string) => void
   pushMessage: (role: ChatMessage['role'], content: string) => void
   sendChat: (text: string) => Promise<void>
   simulatePurchase: () => Promise<void>
@@ -158,6 +167,8 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   cartTotalIsFinal: false,
 
   isOpen: false,
+  sessionKey: null,
+  evaluating: false,
   verdictStatus: 'idle',
   chatHistory: [],
   evaluation: null,
@@ -173,6 +184,8 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   openIntercept: (cart) =>
     set({
       isOpen: true,
+      sessionKey: cartKey(cart),
+      evaluating: cart.total !== null,
       verdictStatus: 'negotiating',
       cart: cart.items,
       cartTotal: cart.total,
@@ -195,10 +208,21 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
       ],
     }),
 
+  // Resuming skips a second /evaluate (another Claude call) and keeps the reply cap where it was. A failed or
+  // unpriced session isn't resumed, so clicking again retries.
+  canResume: (key) => {
+    const s = get()
+    return key === s.sessionKey && (s.evaluation !== null || s.evaluating)
+  },
+
+  reopenIntercept: () => set({ isOpen: true }),
+
   // The server's deterministic score replaces the pending message once it arrives, and its snapshot fills the
-  // charts so they show the numbers the score used.
-  applyEvaluation: (e) =>
+  // charts so they show the numbers the score used. Answers for an older cart are dropped.
+  applyEvaluation: (e, key) => {
+    if (key !== get().sessionKey) return
     set({
+      evaluating: false,
       finances: fromSnapshot(e.snapshot),
       dataSource: e.snapshot.source,
       evaluation: e,
@@ -206,11 +230,14 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
       verdictStatus: VERDICT_FOR_ACTION[e.action],
       // The score stays internal (it only decides the verdict); the user sees the explanation alone.
       chatHistory: [{ id: makeId(), role: 'agent', content: e.message }],
-    }),
+    })
+  },
 
   // The checkout stays locked: with no score there is nothing to approve.
-  failEvaluation: () =>
+  failEvaluation: (key) => {
+    if (key !== get().sessionKey) return
     set({
+      evaluating: false,
       financesError: "Couldn't load your bank data.",
       chatHistory: [
         {
@@ -219,12 +246,13 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
           content: "I couldn't reach your bank data, so I can't score this purchase. The checkout stays paused.",
         },
       ],
-    }),
+    })
+  },
 
   // SIMULATED: logs the purchase on the server so the ledger and next score reflect it. The checkout click
   // stays blocked, so no Amazon order is placed.
   simulatePurchase: async () => {
-    const { evaluation, purchaseState, cart, cartTotal, pushMessage } = get()
+    const { evaluation, purchaseState, cart, cartTotal, sessionKey, pushMessage } = get()
     if (!evaluation || cartTotal === null || purchaseState !== 'idle') return
     set({ purchaseState: 'saving' })
     try {
@@ -232,6 +260,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
         type: 'purchase',
         purchase: { title: cartTitle(cart), price: cartTotal },
       })
+      if (get().sessionKey !== sessionKey) return
       set({ finances: fromSnapshot(res.snapshot), dataSource: res.snapshot.source, purchaseState: 'done' })
       pushMessage(
         'agent',
@@ -239,6 +268,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
           'It now counts toward your spending, so your next check starts from here.',
       )
     } catch {
+      if (get().sessionKey !== sessionKey) return
       set({ purchaseState: 'idle' })
       pushMessage('agent', "I couldn't reach the server, so nothing was logged.")
     }
@@ -249,8 +279,10 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
 
   // Chat can explain the verdict but never change it: the reply is text only, and the verdict stays as evaluated.
   sendChat: async (text) => {
-    const { evaluation, isAgentTyping, chatClosed, cart, cartTotal, pushMessage } = get()
+    const { evaluation, isAgentTyping, chatClosed, cart, cartTotal, sessionKey, pushMessage } = get()
     if (!evaluation || cartTotal === null || isAgentTyping || chatClosed) return
+    // A reply that lands after a different cart was intercepted belongs to the old conversation.
+    const stale = () => get().sessionKey !== sessionKey
     pushMessage('user', text)
     set({ isAgentTyping: true })
     const history = get().chatHistory.map((m) => ({
@@ -263,14 +295,17 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
         purchase: { title: cartTitle(cart), price: cartTotal },
         history,
       })
+      if (stale()) return
       pushMessage('agent', res.reply)
       if (res.done) set({ chatClosed: true })
     } catch {
+      if (stale()) return
       pushMessage('agent', "I couldn't reach the server. Nothing about this order has changed.")
     } finally {
-      set({ isAgentTyping: false })
+      if (!stale()) set({ isAgentTyping: false })
     }
   },
 
-  close: () => set({ isOpen: false, verdictStatus: 'idle' }),
+  // Only hides the overlay: the conversation stays so clicking the order button again resumes it.
+  close: () => set({ isOpen: false }),
 }))

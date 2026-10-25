@@ -3,7 +3,7 @@ import App from './App'
 import { callServer } from './api'
 import styles from './index.css?inline'
 import { loadSettings, loadTestMode, onSettingsChanged, onTestModeChanged, type Settings } from './settings'
-import { cartTitle, useInterceptorStore, type CartItem, type Evaluation, type InterceptedCart } from './store'
+import { cartKey, cartTitle, useInterceptorStore, type CartItem, type Evaluation, type InterceptedCart } from './store'
 
 const HOST_ID = 'devils-advocate-host'
 
@@ -270,7 +270,13 @@ function intercept(e: Event) {
   e.preventDefault()
   e.stopImmediatePropagation()
   const cart = scrapeCheckout()
-  useInterceptorStore.getState().openIntercept(cart)
+  const store = useInterceptorStore.getState()
+  // Same cart as the conversation already on this page: pick it up where it was left.
+  if (store.canResume(cartKey(cart))) {
+    store.reopenIntercept()
+    return
+  }
+  store.openIntercept(cart)
   requestEvaluation(cart)
 }
 
@@ -278,11 +284,12 @@ function intercept(e: Event) {
 function requestEvaluation(cart: InterceptedCart) {
   // No price, nothing to score: the overlay already says so and the lock holds.
   if (cart.total === null) return
+  const key = cartKey(cart)
   callServer<Evaluation>({ type: 'evaluate', purchase: { title: cartTitle(cart.items), price: cart.total } })
-    .then((e) => useInterceptorStore.getState().applyEvaluation(e))
+    .then((e) => useInterceptorStore.getState().applyEvaluation(e, key))
     .catch((err: Error) => {
       console.warn('[devils-advocate] evaluate failed:', err.message)
-      useInterceptorStore.getState().failEvaluation()
+      useInterceptorStore.getState().failEvaluation(key)
     })
 }
 
