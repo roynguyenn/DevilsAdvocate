@@ -6,7 +6,8 @@ and is why the LLM is never allowed to decide anything.
 
 from dataclasses import dataclass, asdict
 
-# Tunable defaults (brief section 8). Users set budget/buffer/floor; these weights are ours.
+# Tunable defaults (brief section 8). The budget comes from the user's Nessie profile; buffer/floor are
+# settings; these weights are ours.
 WEIGHTS = {"bills": 0.5, "budget": 0.3, "buffer": 0.2}
 AWARE_NUDGE_DROP = 15  # Aware mode offers "Sleep on it" when the score drops this much...
 AWARE_NUDGE_BELOW = 50  # ...or ends below this.
@@ -28,7 +29,7 @@ class Components:
 
 def compute_components(
     balance: float,
-    bills_14d: float,
+    monthly_bills: float,
     budget: float,
     spent: float,
     buffer_target: float,
@@ -39,9 +40,9 @@ def compute_components(
     balance_after = balance - price
     left_after = budget - spent - price
 
-    bills_score = 100.0 if bills_14d <= 0 else clamp(100 * (balance_after / bills_14d - 1))
+    bills_score = 100.0 if monthly_bills <= 0 else clamp(100 * (balance_after / monthly_bills - 1))
     budget_score = clamp(100 * left_after / budget) if budget > 0 else 0.0
-    buffer_score = clamp(100 * (balance_after - bills_14d) / buffer_target) if buffer_target > 0 else 100.0
+    buffer_score = clamp(100 * (balance_after - monthly_bills) / buffer_target) if buffer_target > 0 else 100.0
 
     raw = (
         WEIGHTS["bills"] * bills_score
@@ -68,8 +69,8 @@ def evaluate(snapshot: dict, purchase: dict, state: dict) -> dict:
 
     common = dict(
         balance=snapshot["balance"],
-        bills_14d=snapshot["bills_14d"],
-        budget=settings["budget"],
+        monthly_bills=snapshot["monthly_bills"],
+        budget=snapshot["budget"],
         spent=snapshot["spent_this_month"],
         buffer_target=settings["buffer_target"],
     )
@@ -83,9 +84,8 @@ def evaluate(snapshot: dict, purchase: dict, state: dict) -> dict:
         "components_after": {k: round(v, 1) for k, v in asdict(after).items()},
         "price": purchase["price"],
         "balance_after": round(snapshot["balance"] - purchase["price"], 2),
-        "bills_14d": snapshot["bills_14d"],
-        "bills_window_days": 14,
-        "budget_left_after": round(settings["budget"] - snapshot["spent_this_month"] - purchase["price"], 2),
+        "monthly_bills": snapshot["monthly_bills"],
+        "budget_left_after": round(snapshot["budget"] - snapshot["spent_this_month"] - purchase["price"], 2),
         "mode": settings["mode"],
         **verdict,
     }

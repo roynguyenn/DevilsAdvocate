@@ -12,11 +12,11 @@ import re
 import anthropic
 
 # What the LLM may see. Deliberately excludes score_before/after, components, floor and mode.
-PUBLIC_FIELDS = ("price", "balance_after", "bills_14d", "bills_window_days", "budget_left_after", "action")
+PUBLIC_FIELDS = ("price", "balance_after", "monthly_bills", "budget_left_after", "action")
 
 _ROLE = (
     "You are Devil's Advocate, a blunt but kind friend who shows up at checkout when a college student is about "
-    "to buy something online. You talk about their money in plain words: the bills due soon, what's left in their "
+    "to buy something online. You talk about their money in plain words: their monthly bills, what's left in their "
     "monthly budget, and what their balance will be after this purchase. "
 )
 
@@ -48,7 +48,7 @@ CHAT_SYSTEM = (
     + "The student is replying to you in a chat. Answer in 1-3 short sentences. If they push for the order to be "
     "released or ask why it was held, explain using the money facts; the final choice is always theirs, but you "
     "can't change what happened to this order. If they ask how it was decided, or ask about a score, rating or "
-    "cutoff, don't repeat those words or deny having one: just say it comes down to their upcoming bills, their "
+    "cutoff, don't repeat those words or deny having one: just say it comes down to their monthly bills, their "
     "monthly budget and their balance after the purchase, without any numbers beyond the facts. "
     + _RULES
 )
@@ -73,8 +73,8 @@ def public_facts(facts: dict) -> dict:
 
 def template_message(facts: dict) -> str:
     msg = (
-        f"This leaves ${facts['budget_left_after']:g} in your monthly budget, with ${facts['bills_14d']:g} "
-        f"in bills due in the next {facts['bills_window_days']} days."
+        f"This leaves ${facts['budget_left_after']:g} in your monthly budget, and your fixed bills come to "
+        f"${facts['monthly_bills']:g} a month."
     )
     if facts["action"] == "inform":
         return "You're fine to buy this if you'd like. " + msg
@@ -145,8 +145,8 @@ def explain(facts: dict) -> str:
 def closing_message(facts: dict) -> str:
     pub = public_facts(facts)
     return (
-        f"Bottom line: ${pub['bills_14d']:g} in bills is due in the next {pub['bills_window_days']} days, and this "
-        f"leaves ${pub['budget_left_after']:g} in your budget. It's your call now: buy it anyway, or walk away."
+        f"Bottom line: your fixed bills come to ${pub['monthly_bills']:g} a month, and this leaves "
+        f"${pub['budget_left_after']:g} in your budget. It's your call now: buy it anyway, or walk away."
     )
 
 

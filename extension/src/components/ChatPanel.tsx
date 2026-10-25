@@ -29,7 +29,7 @@ export default function ChatPanel() {
   const chatHistory = useInterceptorStore((s) => s.chatHistory)
   const close = useInterceptorStore((s) => s.close)
   const hasEvaluation = useInterceptorStore((s) => s.evaluation !== null)
-  const hasPrice = useInterceptorStore((s) => s.cartItemPrice !== null)
+  const hasPrice = useInterceptorStore((s) => s.cartTotal !== null)
   const isAgentTyping = useInterceptorStore((s) => s.isAgentTyping)
   const chatClosed = useInterceptorStore((s) => s.chatClosed)
   const sendChat = useInterceptorStore((s) => s.sendChat)

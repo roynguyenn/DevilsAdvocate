@@ -1,4 +1,7 @@
-"""JSON-file state. One user, one writer, so no database for the hackathon.
+"""JSON-file state for agent preferences and bookkeeping. One user, one writer.
+
+The user's money (balance, income, bills, savings, purchases) lives in Nessie, not here: see
+finances.py and snapshot.py. This file only holds what a bank has no place for.
 
 Writes go to a temp file and then rename, so a crash mid-write can't leave half a file.
 """
@@ -12,9 +15,11 @@ STATE = DATA_DIR / "state.json"
 COMMITMENTS = DATA_DIR / "commitments.json"
 
 DEFAULT_STATE = {
-    "settings": {"budget": 400, "buffer_target": 300, "mode": "aware", "floor": 70},
+    "settings": {"buffer_target": 300, "mode": "aware", "floor": 70},
     "regret_penalty": {},
     "blocks_this_week": 0,
+    "account_id": None,  # Nessie checking account linked in the popup; None means the seeded one
+    "ignored_nessie_purchases": [],
 }
 
 
@@ -32,7 +37,8 @@ def write_json(path: Path, data) -> None:
 
 
 def load_state() -> dict:
-    return _read(STATE, DEFAULT_STATE)
+    # Merged over the defaults so state files written before a key existed still load.
+    return {**json.loads(json.dumps(DEFAULT_STATE)), **_read(STATE, {})}
 
 
 def save_state(state: dict) -> None:

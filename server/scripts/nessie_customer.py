@@ -66,6 +66,7 @@ def use(customer_id: str) -> None:
     checking = next((a for a in accounts if a.get("type") == "Checking"), accounts[0] if accounts else None)
     if not checking:
         sys.exit("That customer has no accounts. Run scripts/seed_nessie.py to make a complete one.")
+    savings = next((a for a in accounts if a.get("type") == "Savings"), None)
     ids = {
         "customer_id": customer_id,
         "account_id": checking["_id"],
@@ -73,7 +74,13 @@ def use(customer_id: str) -> None:
         "merchant_id": current().get("merchant_id"),
         "last_name": customer.get("last_name", ""),
     }
+    if savings:
+        ids["savings_account_id"] = savings["_id"]
     IDS_FILE.write_text(json.dumps(ids, indent=2) + "\n")
+    # The server prefers the account the popup linked (state.json) over nessie_ids.json, so forget it.
+    state = store.load_state()
+    if state.pop("account_id", None):
+        store.save_state(state)
     print(f"Now using {customer.get('first_name', '')} {ids['last_name']}: account {checking.get('nickname')} "
           f"({checking['_id']}), balance {checking.get('balance')}")
 

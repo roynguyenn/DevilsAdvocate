@@ -6,18 +6,18 @@ Run from server/:  uvicorn app:app --port 3001 --reload
 from typing import Literal
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 load_dotenv()  # before importing modules that read env vars
 
+import finances  # noqa: E402
 import llm  # noqa: E402
-import money_plan  # noqa: E402
+import nessie  # noqa: E402
 import score  # noqa: E402
 import store  # noqa: E402
-from nessie import NessieError  # noqa: E402
 from snapshot import describe_source, get_financial_snapshot, record_simulated_purchase  # noqa: E402
 
 app = FastAPI(title="Spend-aware checkout")
@@ -31,6 +31,13 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(nessie.NessieError)
+def bank_unavailable(_request: Request, exc: nessie.NessieError):
+    # NessieError messages never contain the URL (it carries the key), so they're safe to log.
+    print(f"[nessie] {exc}")
+    return JSONResponse(status_code=502, content={"detail": "The bank (Nessie) is unavailable."})
+
+
 class Purchase(BaseModel):
     title: str = Field(max_length=500)
     price: float = Field(gt=0, le=100_000)
@@ -39,10 +46,27 @@ class Purchase(BaseModel):
 
 
 class Settings(BaseModel):
-    budget: float
     buffer_target: float
     mode: Literal["aware", "strict"]
     floor: int
+
+
+class Profile(BaseModel):
+    """The popup's Finances tab. Stored in Nessie; discretionary is derived there, so it must balance here."""
+
+    account_id: str = Field(min_length=1, max_length=100)
+    monthly_income: float = Field(gt=0, le=1_000_000)
+    fixed_bills: float = Field(ge=0, le=1_000_000)
+    savings: float = Field(ge=0, le=1_000_000)
+    discretionary: float = Field(ge=0, le=1_000_000)
+
+    @model_validator(mode="after")
+    def split_is_whole_income(self):
+        # Whole cents, matching the popup, so float drift can't reject a balanced split.
+        cents = [round(v * 100) for v in (self.fixed_bills, self.savings, self.discretionary)]
+        if sum(cents) != round(self.monthly_income * 100):
+            raise ValueError("fixed_bills + savings + discretionary must equal monthly_income")
+        return self
 
 
 class Commitment(BaseModel):
@@ -66,14 +90,6 @@ class ChatRequest(BaseModel):
     history: list[ChatTurn]
 
 
-class ProfileInput(BaseModel):
-    account_id: str = Field(max_length=100)
-    monthly_income: float = Field(ge=0, le=1_000_000)
-    fixed_bills: float = Field(ge=0, le=1_000_000)
-    savings: float = Field(ge=0, le=1_000_000)
-    # Sent by the popup but not trusted: the server derives it from the other three.
-    discretionary: float | None = None
-
 
 MAX_USER_TURNS = 3
 
@@ -83,25 +99,13 @@ def health():
     return {"ok": True, "source": describe_source()}
 
 
-@app.exception_handler(NessieError)
-def nessie_down(_request, exc: NessieError):
-    # The extension shows `detail` to the user (popup save bar, connect-bank modal).
-    print(f"[nessie] {exc}")
-    return JSONResponse(status_code=502, content={"detail": "Couldn't reach the bank (Nessie). Try again in a moment."})
+UI_SNAPSHOT_KEYS = ("monthly_income", "monthly_bills", "savings", "budget", "spent_this_month", "balance",
+                    "transactions", "source")
 
 
 def _snapshot_for_ui(snap: dict) -> dict:
     """What the overlay's charts and ledger draw, so they match the numbers the score used."""
-    keys = ("monthly_income", "monthly_bills", "savings", "budget", "spent_this_month", "balance", "transactions",
-            "source")
-    return {k: snap[k] for k in keys}
-
-
-def _facts(snap: dict, purchase: Purchase) -> dict:
-    # The monthly plan's discretionary amount is the budget the score uses, so the popup's numbers count.
-    state = store.load_state()
-    state["settings"] = {**state["settings"], "budget": snap["budget"]}
-    return score.evaluate(snap, purchase.model_dump(), state)
+    return {k: snap[k] for k in UI_SNAPSHOT_KEYS}
 
 
 @app.post("/evaluate")
@@ -109,7 +113,7 @@ def evaluate(purchase: Purchase, debug: bool = False):
     """The score and threshold stay server-side: the extension only gets the verdict and the wording.
     `?debug=true` adds the full facts (scores, components, floor) for development."""
     snap = get_financial_snapshot()
-    facts = _facts(snap, purchase)
+    facts = score.evaluate(snap, purchase.model_dump(), store.load_state())
     body = {"action": facts["action"], "message": llm.explain(facts), "snapshot": _snapshot_for_ui(snap)}
     return {**body, "debug": facts} if debug else body
 
@@ -121,47 +125,12 @@ def simulate_purchase(purchase: Purchase):
     return {"snapshot": _snapshot_for_ui(get_financial_snapshot())}
 
 
-@app.get("/accounts")
-def accounts():
-    """Accounts the popup can link: display metadata only ({id, nickname, last4}), never credentials."""
-    return money_plan.list_accounts()
-
-
-def _profile(account: dict, plan: dict) -> dict:
-    return {"account": account, "monthly_income": plan["monthly_income"], "fixed_bills": plan["fixed_bills"],
-            "savings": plan["savings"], "discretionary": plan["discretionary"]}
-
-
-def _account_or_404(account_id: str) -> dict:
-    account = money_plan.find_account(account_id)
-    if not account:
-        raise HTTPException(404, "That account isn't one you can link.")
-    return account
-
-
-@app.get("/profile")
-def get_profile(account_id: str):
-    """The monthly plan the bank holds for this account (all zeros if it was never saved)."""
-    return _profile(_account_or_404(account_id), money_plan.read_plan(account_id))
-
-
-@app.put("/profile")
-def put_profile(p: ProfileInput):
-    """Save the popup's Finances tab to the bank. Discretionary is recomputed here, so it always balances."""
-    account = _account_or_404(p.account_id)
-    try:
-        plan = money_plan.write_plan(p.account_id, p.monthly_income, p.fixed_bills, p.savings)
-    except ValueError as e:
-        raise HTTPException(400, str(e)) from None
-    return _profile(account, plan)
-
-
 @app.post("/chat")
 def chat(req: ChatRequest):
     if not req.history or req.history[-1].role != "user":
         raise HTTPException(400, "history must end with a user message")
     # Recompute facts server-side so the client can't hand Claude made-up numbers.
-    facts = _facts(get_financial_snapshot(), req.purchase)
+    facts = score.evaluate(get_financial_snapshot(), req.purchase.model_dump(), store.load_state())
     user_turns = sum(t.role == "user" for t in req.history)
     # The cap is never shown to the user: their last allowed reply gets a wrap-up that hands them the decision,
     # and `done` tells the overlay to close the chat. Anything past the cap gets the wrap-up without calling Claude.
@@ -170,6 +139,43 @@ def chat(req: ChatRequest):
     final = user_turns == MAX_USER_TURNS
     history = [t.model_dump() for t in req.history]
     return {"reply": llm.chat(facts, req.purchase.title, history, final=final), "done": final}
+
+
+def _checking_account(account_id: str) -> dict:
+    account = finances.find_checking_account(account_id)
+    if account is None:
+        raise HTTPException(404, "not one of this customer's checking accounts")
+    return account
+
+
+def _profile_response(account: dict) -> dict:
+    return {"account": finances.account_summary(account), **finances.get_profile(account["_id"])}
+
+
+@app.get("/accounts")
+def accounts():
+    """Accounts the popup's Connect Bank dialog may link. Display fields only."""
+    return [finances.account_summary(a) for a in finances.checking_accounts()]
+
+
+@app.get("/profile")
+def get_profile(account_id: str | None = None):
+    """The financial profile as Nessie holds it, for the linked account (or `account_id`, to preview one)."""
+    return _profile_response(_checking_account(account_id or finances.linked_account_id()))
+
+
+@app.put("/profile")
+def put_profile(profile: Profile):
+    """Write the popup's Finances tab to Nessie and link the account; returns what Nessie now holds."""
+    account = _checking_account(profile.account_id)
+    try:
+        finances.save_profile(account["_id"], profile.monthly_income, profile.fixed_bills, profile.savings)
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from None
+    state = store.load_state()
+    state["account_id"] = account["_id"]
+    store.save_state(state)
+    return _profile_response(account)
 
 
 @app.get("/settings")

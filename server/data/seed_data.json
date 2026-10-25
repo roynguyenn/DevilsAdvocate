@@ -1,15 +1,22 @@
 {
-  "_note": "Fake demo data. The transactions sum to $150 spent this month, so a $180 item scores 89 -> 62 (the brief's worked example). days_ago is relative to today.",
-  "balance": 1400,
-  "bills_14d": 700,
-  "_plan_note": "Used until the user saves their own plan in the popup. 2000 - 1200 - 400 leaves a $400 discretionary budget.",
-  "plan_defaults": {"monthly_income": 2000, "fixed_bills": 1200, "savings": 400},
-  "transactions": [
-    {"merchant": "Amazon.com", "category": "shopping", "amount": 45.20, "days_ago": 1},
-    {"merchant": "Uber", "category": "transport", "amount": 18.50, "days_ago": 1},
-    {"merchant": "Starbucks", "category": "coffee", "amount": 6.12, "days_ago": 2},
-    {"merchant": "Amazon.com", "category": "shopping", "amount": 50.84, "days_ago": 4},
-    {"merchant": "Netflix", "category": "subscriptions", "amount": 15.49, "days_ago": 5},
-    {"merchant": "Chipotle", "category": "dining", "amount": 13.85, "days_ago": 6}
+  "_note": "Fake demo data that scripts/seed_nessie.py writes to Nessie. The purchases sum to $150 spent this month and the profile gives a $400 discretionary budget (1500 - 700 - 400), so a $180 item scores 89 -> 62 (the brief's worked example). days_ago is relative to the day you seed.",
+  "checking_balance": 1400,
+  "profile": {"monthly_income": 1500, "fixed_bills": 700, "savings": 400},
+  "merchants": {
+    "Amazon.com": "shopping",
+    "Uber": "transport",
+    "Starbucks": "coffee",
+    "Whole Foods Market": "groceries",
+    "Netflix": "subscriptions",
+    "Chipotle": "dining"
+  },
+  "purchases": [
+    {"merchant": "Amazon.com", "amount": 45.20, "days_ago": 1},
+    {"merchant": "Uber", "amount": 18.50, "days_ago": 1},
+    {"merchant": "Starbucks", "amount": 6.12, "days_ago": 2},
+    {"merchant": "Whole Foods Market", "amount": 30.84, "days_ago": 3},
+    {"merchant": "Amazon.com", "amount": 20.00, "days_ago": 4},
+    {"merchant": "Netflix", "amount": 15.49, "days_ago": 5},
+    {"merchant": "Chipotle", "amount": 13.85, "days_ago": 6}
   ]
 }
