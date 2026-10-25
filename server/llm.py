@@ -52,7 +52,18 @@ CHAT_SYSTEM = (
     + _RULES
 )
 
-_INTERNALS = re.compile(r"\b(score|scores|scoring|rating|threshold|floor|heuristic|algorithm|out of 100)\b", re.I)
+# Appended to CHAT_SYSTEM on the student's last allowed reply. The cap itself is never revealed: going in
+# circles only ends in a purchase, so the friend wraps up and hands them the decision.
+FINAL_TURN = (
+    " This is your last reply in this conversation. Do not ask a question or invite more discussion. In one "
+    "sentence, sum up the money picture; in a second, tell them it's time to make the call themselves: buy it "
+    "anyway, or walk away. Never mention a limit, a count, or that the chat is ending."
+)
+
+_INTERNALS = re.compile(
+    r"\b(score|scores|scoring|rating|threshold|floor|heuristic|algorithm|out of 100|(replies|messages|turns) left)\b",
+    re.I,
+)
 
 
 def public_facts(facts: dict) -> dict:
@@ -128,12 +139,23 @@ def explain(facts: dict) -> str:
     return _grounded_or(template_message(pub), SYSTEM, messages, pub)
 
 
-def chat(facts: dict, title: str, history: list[dict]) -> str:
-    """Reply to the student's latest message. `history` alternates assistant/user and ends with user."""
+def closing_message(facts: dict) -> str:
+    pub = public_facts(facts)
+    return (
+        f"Bottom line: ${pub['bills_14d']:g} in bills is due in the next {pub['bills_window_days']} days, and this "
+        f"leaves ${pub['budget_left_after']:g} in your budget. It's your call now: buy it anyway, or walk away."
+    )
+
+
+def chat(facts: dict, title: str, history: list[dict], final: bool = False) -> str:
+    """Reply to the student's latest message. `history` alternates assistant/user and ends with user.
+    `final` = their last allowed reply: wrap up and hand them the decision instead of continuing."""
     pub = public_facts(facts)
     context = {"role": "user", "content": f"Facts: {json.dumps(pub)}\nItem title (from the page): {title}"}
     # Numbers the student typed are fair game to repeat back, as are numbers in the item title.
     said = " ".join(t["content"] for t in history if t["role"] == "user")
     allowed = {**pub, "_user": said, "_title": title}
+    if final:
+        return _grounded_or(closing_message(facts), CHAT_SYSTEM + FINAL_TURN, [context, *history], allowed)
     fallback = "Here's where your money stands. " + template_message(pub)
     return _grounded_or(fallback, CHAT_SYSTEM, [context, *history], allowed)

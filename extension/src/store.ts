@@ -3,9 +3,6 @@ import { callServer } from './api'
 import { formatUsd } from './format'
 import type { Intensity, Settings } from './settings'
 
-// Mirrors MAX_USER_TURNS in server/app.py, which is the one that actually enforces it.
-export const MAX_USER_TURNS = 3
-
 export type VerdictStatus = 'idle' | 'negotiating' | 'blocked' | 'approved'
 
 export interface ChatMessage {
@@ -84,6 +81,8 @@ interface InterceptorState {
   chatHistory: ChatMessage[]
   evaluation: Evaluation | null
   isAgentTyping: boolean
+  // Set when the server wraps the chat up. The reply cap lives only on the server and is never shown.
+  chatClosed: boolean
   purchaseState: 'idle' | 'saving' | 'done'
 
   applySettings: (settings: Settings) => void
@@ -153,6 +152,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   chatHistory: [],
   evaluation: null,
   isAgentTyping: false,
+  chatClosed: false,
   purchaseState: 'idle',
 
   applySettings: (settings) =>
@@ -173,6 +173,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
       cartItemImage: item.imageUrl,
       evaluation: null,
       isAgentTyping: false,
+      chatClosed: false,
       purchaseState: 'idle',
       chatHistory: [{ id: makeId(), role: 'agent', content: mockOpeningSalvo(get(), item) }],
     }),
@@ -216,8 +217,8 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
 
   // Chat can explain the verdict but never change it: the reply is text only, and the verdict stays as evaluated.
   sendChat: async (text) => {
-    const { evaluation, isAgentTyping, cartItemName, cartItemPrice, pushMessage } = get()
-    if (!evaluation || isAgentTyping) return
+    const { evaluation, isAgentTyping, chatClosed, cartItemName, cartItemPrice, pushMessage } = get()
+    if (!evaluation || isAgentTyping || chatClosed) return
     pushMessage('user', text)
     set({ isAgentTyping: true })
     const history = get().chatHistory.map((m) => ({
@@ -225,12 +226,13 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
       content: m.content,
     }))
     try {
-      const res = await callServer<{ reply: string }>({
+      const res = await callServer<{ reply: string; done: boolean }>({
         type: 'chat',
         purchase: { title: cartItemName, price: cartItemPrice },
         history,
       })
       pushMessage('agent', res.reply)
+      if (res.done) set({ chatClosed: true })
     } catch {
       pushMessage('agent', "I couldn't reach the server. Nothing about this order has changed.")
     } finally {

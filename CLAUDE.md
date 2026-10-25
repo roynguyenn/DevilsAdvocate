@@ -44,7 +44,7 @@
     *   **Right Panel (Agent/Chat):**
         *   Pinned verdict badge at the top: `[ Negotiating ]`, `[ Blocked ]`, or `[ Approved ]`. `Blocked` is set only when `/evaluate` returns `action: "block"`.
         *   Chat window. The first agent message is Claude's explanation (money only, no score; Rule 5). Replies arrive whole (not streamed). Agent bubbles are amber-tinted; user bubbles are zinc.
-        *   User input: enabled once `evaluation` is set, disabled while the agent is replying, and capped at `MAX_USER_TURNS` = 3 replies (mirrors the server, which enforces it). Enter sends, Shift+Enter adds a newline. Sending goes through the store action `sendChat`.
+        *   User input: enabled once `evaluation` is set, disabled while the agent is replying, and closed (`chatClosed`, placeholder "Time to decide.") when `/chat` returns `done: true`. **The reply cap is hidden:** the extension doesn't know or show it, so there's no countdown to bargain against. Enter sends, Shift+Enter adds a newline. Sending goes through the store action `sendChat`.
         *   **"Buy anyway (simulated)"** (`SimulatedBuyButton`, store action `simulatePurchase`): logs the item as a fake purchase via `POST /purchase`, then updates the ledger and spent from the returned snapshot. The checkout click stays blocked, so no Amazon order is placed. One click per intercept.
         *   *Not yet built:* "Sleep on it 24h" and "Make a commitment" buttons; cooldown.
 
@@ -81,7 +81,7 @@
     *   `GET /health` → `{ ok: true, source }`, where `source` is `{ type: "seed" }` or `{ type: "nessie", customer_id, account_id, customer_name }` (local files only, no Nessie call). The same `source` is in every snapshot, and the overlay shows it at the bottom of the left panel (`DataSourceBadge`).
     *   `POST /evaluate` `{ title, price, quantity?, category? }` → `{ action, message, snapshot }`, where `snapshot` is `{ budget, spent_this_month, balance, transactions, source }` for the UI. `?debug=true` adds `debug` with the full facts (`score_before`, `score_after`, `components_after`, `floor`, …) for development; the extension never asks for it.
     *   `POST /purchase` `{ title, price }` → `{ snapshot }`. **SIMULATED** "Buy anyway": records a fake purchase so the ledger and the next score reflect it. Nothing is ordered anywhere.
-    *   `POST /chat` `{ purchase, history: [{ role: user|assistant, content }] }` → `{ reply, done }`. History must end with a user turn; more than 3 user turns returns `done: true` without calling Claude. Facts are recomputed server-side, never taken from the client.
+    *   `POST /chat` `{ purchase, history: [{ role: user|assistant, content }] }` → `{ reply, done }`. History must end with a user turn. On the user's `MAX_USER_TURNS`th (3rd) reply, Claude gets `llm.FINAL_TURN`: sum up, hand them the decision (buy anyway or walk away), no question, never mention a limit; the response has `done: true`. More than 3 user turns returns `llm.closing_message` with `done: true` without calling Claude. Facts are recomputed server-side, never taken from the client.
     *   `GET|PUT /settings` `{ budget, buffer_target, mode: aware|strict, floor }`.
     *   Stubs (TODO): `POST /commit`, `GET /followups`, `POST /outcome`, `POST /demo/skip-week`.
 *   **Planned, not built:** a richer snapshot for the UI (`monthly_income`, `fixed_bills`, `days_until_payday`, `recent_transactions` for the Recent Ledger: latest ~10 Nessie `/purchases`, each `{ id, merchant, category, amount, timestamp }`, with `category` one of `shopping | transport | coffee | groceries | dining | subscriptions` to match `TransactionCategory` in `extension/src/store.ts`); signed unblock tokens; SSE streaming.
@@ -116,7 +116,7 @@
 
 **Step 4: Chat (`llm.chat`, `POST /chat`).**
 *   Answers questions about this purchase in 1–3 sentences using the facts. It cannot approve, unblock or change the score, and says so when asked. It can't verify claims about how the item will be used.
-*   **Turn cap:** 3 user replies, enforced server-side.
+*   **Hidden turn cap:** 3 user replies, enforced server-side and never shown. Rationale: past that point the user just circles until they buy, so the last reply wraps up and makes them decide right there.
 *   The scraped item title is untrusted page text and is passed as data.
 
 **Step 5: Follow-up loop (planned).** Commitments with a follow-up date; answers "used / returned / unused" adjust `regret_penalty` (+5 per returned/unused, max 15; −3 per used, min 0). "Saved" money counts only if a blocked/abandoned purchase isn't bought within 7 days; in the demo that time-skip is SIMULATED and labeled.

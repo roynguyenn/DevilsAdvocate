@@ -103,12 +103,16 @@ def simulate_purchase(purchase: Purchase):
 def chat(req: ChatRequest):
     if not req.history or req.history[-1].role != "user":
         raise HTTPException(400, "history must end with a user message")
-    if sum(t.role == "user" for t in req.history) > MAX_USER_TURNS:
-        return {"reply": "That's the end of this chat. The score above stands, and the choice is yours.", "done": True}
     # Recompute facts server-side so the client can't hand Claude made-up numbers.
     facts = score.evaluate(get_financial_snapshot(), req.purchase.model_dump(), store.load_state())
+    user_turns = sum(t.role == "user" for t in req.history)
+    # The cap is never shown to the user: their last allowed reply gets a wrap-up that hands them the decision,
+    # and `done` tells the overlay to close the chat. Anything past the cap gets the wrap-up without calling Claude.
+    if user_turns > MAX_USER_TURNS:
+        return {"reply": llm.closing_message(facts), "done": True}
+    final = user_turns == MAX_USER_TURNS
     history = [t.model_dump() for t in req.history]
-    return {"reply": llm.chat(facts, req.purchase.title, history), "done": False}
+    return {"reply": llm.chat(facts, req.purchase.title, history, final=final), "done": final}
 
 
 @app.get("/settings")

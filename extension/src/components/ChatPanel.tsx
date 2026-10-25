@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { motion } from 'framer-motion'
 import { CheckCircle2, Flame, Scale, SendHorizontal, ShieldX, X } from 'lucide-react'
-import { MAX_USER_TURNS, useInterceptorStore, type VerdictStatus } from '../store'
+import { useInterceptorStore, type VerdictStatus } from '../store'
 import SimulatedBuyButton from './SimulatedBuyButton'
 
 const BADGES: Record<VerdictStatus, { label: string; className: string; Icon: typeof Scale } | null> = {
@@ -29,17 +29,18 @@ export default function ChatPanel() {
   const close = useInterceptorStore((s) => s.close)
   const hasEvaluation = useInterceptorStore((s) => s.evaluation !== null)
   const isAgentTyping = useInterceptorStore((s) => s.isAgentTyping)
+  const chatClosed = useInterceptorStore((s) => s.chatClosed)
   const sendChat = useInterceptorStore((s) => s.sendChat)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [draft, setDraft] = useState('')
 
-  const turnsLeft = MAX_USER_TURNS - chatHistory.filter((m) => m.role === 'user').length
-  const canSend = hasEvaluation && !isAgentTyping && turnsLeft > 0
+  // No reply counter on purpose: a visible countdown invites bargaining to the last message.
+  const canSend = hasEvaluation && !isAgentTyping && !chatClosed
   const placeholder = !hasEvaluation
     ? 'Waiting for the server…'
-    : turnsLeft > 0
-      ? `Ask about this purchase (${turnsLeft} ${turnsLeft === 1 ? 'reply' : 'replies'} left)`
-      : 'Chat limit reached. The choice is yours.'
+    : chatClosed
+      ? 'Time to decide.'
+      : 'Ask about this purchase…'
 
   const submit = (e: FormEvent | KeyboardEvent) => {
     e.preventDefault()
