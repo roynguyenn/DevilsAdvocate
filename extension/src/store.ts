@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { callServer } from './api'
+import { formatUsd } from './format'
 
 // Mirrors MAX_USER_TURNS in server/app.py, which is the one that actually enforces it.
 export const MAX_USER_TURNS = 3
@@ -15,6 +16,18 @@ export interface ChatMessage {
 export interface InterceptedItem {
   name: string
   price: number
+  imageUrl: string | null
+}
+
+export type TransactionCategory = 'shopping' | 'transport' | 'coffee' | 'groceries' | 'dining' | 'subscriptions'
+
+// Mirrors a Nessie /purchases record after the backend maps merchant_id → name/category.
+export interface Transaction {
+  id: string
+  merchant: string
+  category: TransactionCategory
+  amount: number
+  timestamp: number
 }
 
 // Shape returned by the server's POST /evaluate (server/score.py evaluate() + message).
@@ -28,12 +41,17 @@ export interface Evaluation {
 
 interface InterceptorState {
   // Mock financial snapshot — replaced by the backend's cached snapshot during streaming wire-up.
+  monthlyIncome: number
+  fixedBills: number
+  // Discretionary budget for the month; savings is whatever income is left after bills and this.
   totalBudget: number
   spent: number
   daysUntilPayday: number
+  ledger: Transaction[]
 
   cartItemName: string
   cartItemPrice: number
+  cartItemImage: string | null
 
   isOpen: boolean
   verdictStatus: VerdictStatus
@@ -50,8 +68,22 @@ interface InterceptorState {
 
 const makeId = () => Math.random().toString(36).slice(2, 10)
 
-export const formatUsd = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+const HOUR = 3_600_000
+const hoursAgo = (h: number) => Date.now() - h * HOUR
+
+const MOCK_LEDGER: Transaction[] = [
+  { id: 't1', merchant: 'Amazon.com', category: 'shopping', amount: 45.2, timestamp: hoursAgo(19) },
+  { id: 't2', merchant: 'Uber', category: 'transport', amount: 18.5, timestamp: hoursAgo(26) },
+  { id: 't3', merchant: 'Starbucks', category: 'coffee', amount: 6.12, timestamp: hoursAgo(50) },
+  { id: 't4', merchant: 'Whole Foods Market', category: 'groceries', amount: 82.37, timestamp: hoursAgo(75) },
+  { id: 't5', merchant: 'Amazon.com', category: 'shopping', amount: 129.99, timestamp: hoursAgo(98) },
+  { id: 't6', merchant: 'Netflix', category: 'subscriptions', amount: 15.49, timestamp: hoursAgo(122) },
+  { id: 't7', merchant: 'Chipotle', category: 'dining', amount: 13.85, timestamp: hoursAgo(146) },
+  { id: 't8', merchant: 'Lyft', category: 'transport', amount: 22.1, timestamp: hoursAgo(193) },
+  { id: 't9', merchant: 'Amazon.com', category: 'shopping', amount: 64.0, timestamp: hoursAgo(240) },
+]
+
+export const selectSavings = (s: InterceptorState) => Math.max(s.monthlyIncome - s.fixedBills - s.totalBudget, 0)
 
 function mockOpeningSalvo(s: InterceptorState, item: InterceptedItem): string {
   const remaining = s.totalBudget - s.spent
@@ -69,12 +101,16 @@ function mockOpeningSalvo(s: InterceptorState, item: InterceptedItem): string {
 }
 
 export const useInterceptorStore = create<InterceptorState>((set, get) => ({
+  monthlyIncome: 4500,
+  fixedBills: 1800,
   totalBudget: 800,
   spent: 540,
   daysUntilPayday: 9,
+  ledger: MOCK_LEDGER,
 
   cartItemName: 'Sony WH-1000XM5 Wireless Headphones',
   cartItemPrice: 179.99,
+  cartItemImage: null,
 
   isOpen: false,
   verdictStatus: 'idle',
@@ -88,6 +124,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
       verdictStatus: 'negotiating',
       cartItemName: item.name,
       cartItemPrice: item.price,
+      cartItemImage: item.imageUrl,
       evaluation: null,
       isAgentTyping: false,
       chatHistory: [{ id: makeId(), role: 'agent', content: mockOpeningSalvo(get(), item) }],

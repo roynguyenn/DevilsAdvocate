@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { motion } from 'framer-motion'
-import { Bot, CheckCircle2, Scale, SendHorizontal, ShieldX, X } from 'lucide-react'
+import { CheckCircle2, Flame, Scale, SendHorizontal, ShieldX, X } from 'lucide-react'
 import { MAX_USER_TURNS, useInterceptorStore, type VerdictStatus } from '../store'
 
 const BADGES: Record<VerdictStatus, { label: string; className: string; Icon: typeof Scale } | null> = {
   idle: null,
-  negotiating: { label: 'Negotiating', className: 'bg-amber-100 text-amber-900 ring-amber-300', Icon: Scale },
-  blocked: { label: 'Blocked', className: 'bg-red-100 text-red-900 ring-red-300', Icon: ShieldX },
-  approved: { label: 'Approved', className: 'bg-emerald-100 text-emerald-900 ring-emerald-300', Icon: CheckCircle2 },
+  negotiating: { label: 'Negotiating', className: 'bg-amber-500/10 text-amber-300 ring-amber-500/40', Icon: Scale },
+  blocked: { label: 'Blocked', className: 'bg-red-500/10 text-red-300 ring-red-500/40', Icon: ShieldX },
+  approved: { label: 'Approved', className: 'bg-emerald-500/10 text-emerald-300 ring-emerald-500/40', Icon: CheckCircle2 },
 }
 
 function VerdictBadge() {
@@ -54,15 +54,15 @@ export default function ChatPanel() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex items-center justify-between border-b border-neutral-200 px-5 py-4">
+      <header className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900 px-5 py-4">
         <div className="flex items-center gap-3">
-          <h2 className="text-sm font-semibold text-neutral-900">Devil's Advocate</h2>
+          <h2 className="text-sm font-semibold text-zinc-100">Devil's Advocate</h2>
           <VerdictBadge />
         </div>
         <button
           type="button"
           onClick={close}
-          className="rounded-md p-1.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
+          className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
           aria-label="Close and return to checkout"
         >
           <X className="h-4 w-4" />
@@ -79,23 +79,25 @@ export default function ChatPanel() {
             className={`flex gap-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             {m.role === 'agent' && (
-              <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-neutral-900 text-white">
-                <Bot className="h-4 w-4" aria-hidden />
+              <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30">
+                <Flame className="h-4 w-4" aria-hidden />
               </span>
             )}
             <p
               className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-                m.role === 'agent' ? 'rounded-tl-sm bg-neutral-100 text-neutral-900' : 'rounded-tr-sm bg-neutral-900 text-white'
+                m.role === 'agent'
+                  ? 'rounded-tl-sm border border-amber-900/50 bg-amber-950/40 text-zinc-100'
+                  : 'rounded-tr-sm border border-zinc-700 bg-zinc-800 text-zinc-100'
               }`}
             >
               {m.content}
             </p>
           </motion.div>
         ))}
-        {isAgentTyping && <p className="pl-9 text-xs text-neutral-500">Thinking…</p>}
+        {isAgentTyping && <p className="pl-9 text-xs text-zinc-500">Thinking…</p>}
       </div>
 
-      <form className="border-t border-neutral-200 p-4" onSubmit={submit}>
+      <form className="border-t border-zinc-800 bg-zinc-900 p-4" onSubmit={submit}>
         <div className="flex items-end gap-2">
           <textarea
             disabled={!canSend}
@@ -107,12 +109,12 @@ export default function ChatPanel() {
             }}
             placeholder={placeholder}
             maxLength={2000}
-            className="flex-1 resize-none rounded-lg border border-neutral-300 bg-neutral-50 px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 disabled:cursor-not-allowed"
+            className="flex-1 resize-none rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-600 focus:outline-none disabled:cursor-not-allowed"
           />
           <button
             type="submit"
             disabled={!canSend || !draft.trim()}
-            className="rounded-lg bg-neutral-900 p-2.5 text-white disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-lg bg-amber-600 p-2.5 text-zinc-950 hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-30"
             aria-label="Send"
           >
             <SendHorizontal className="h-4 w-4" />

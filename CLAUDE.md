@@ -23,26 +23,30 @@
 ### 3.1 Browser Extension (Manifest V3)
 *   **Checkout URLs:** Amazon serves checkout at `https://www.amazon.com/checkout/*` (current "Chewbacca" pipeline, e.g. `/checkout/p/p-<id>/spc`) and the legacy `https://www.amazon.com/gp/buy/spc/handlers/display.html*`. `manifest.json` `host_permissions` and `content_scripts.matches` must list both and stay in sync.
 *   **DOM Interceptor:** Content script listens for clicks on checkout buttons (`#placeYourOrder1`, `#submitOrderButtonId`, `#bottomSubmitOrderButtonId`, or exact "Buy Now" selectors). Selectors live in one `CHECKOUT_SELECTORS` list in `src/content.tsx`. "Buy Now" is not yet implemented.
-*   **Scraper:** On click, `preventDefault()` is called. Scrape the DOM for: `item_title`, `price`, and `category`. 
+*   **Scraper:** On click, `preventDefault()` is called. Scrape the DOM for: `item_title`, `price`, `image_url` (thumbnail, `https://` only), and `category`. Every field falls back to mock values when a selector misses. `category` is not scraped yet, and the image selectors are unverified against the live Chewbacca checkout.
 *   **Shadow DOM Root:** Mount the React application inside a Shadow DOM to completely isolate it from Amazon's global CSS.
 *   **Service Worker:** Handles auth session and proxies communication between the content script and the backend.
 
 ### 3.2 Frontend (React UI)
-*   **State:** Use a single `Zustand` store for charts, chat history, and verdict state.
+*   **State:** Use a single `Zustand` store for charts, chat history, and verdict state. It currently holds a mock snapshot (`monthlyIncome`, `fixedBills`, `totalBudget` = discretionary budget, `spent`, `daysUntilPayday`, `ledger`); savings is derived (`selectSavings` = income − fixed bills − discretionary). Field names should line up with the backend snapshot (3.3) when streaming is wired up.
+*   **Theme:** Dark overlay (see 7. Code Style → Styling for the exact palette).
 *   **Animations:** Use `Framer Motion` for a smooth slide-in/fade-in of the overlay.
-*   **Layout:** Two-panel split view.
-    *   **Left Panel (Data/Vis):** 
-        *   Recharts Donut Chart: Total Budget vs. Spent. Highlight the *current item's price* as a distinct, contrasting slice so the user visualizes the impact.
-        *   Recharts Bar Chart: Income vs. Monthly Spending pacing.
+*   **Layout:** Two-panel split view sliding in from the right (stacks vertically below the `md` breakpoint).
+    *   **Left Panel (Data/Vis), three cards top to bottom:**
+        *   **Item + Income & Allocation card:** item thumbnail, title and price; below it monthly income and a horizontal stacked `div` bar splitting income into Fixed bills / Savings / Discretionary, with a labeled legend.
+        *   **Monthly budget utilization card:** Recharts donut of the discretionary budget: Spent → *This purchase* (distinct, contrasting slice placed right after Spent) → Remaining, with a legend beside it. Hovering a slice or legend row expands that slice, dims the others, and shows a tooltip with name, amount and % of budget (e.g. "This purchase: $179.99 (22%)").
+        *   **Recent Ledger (Transaction History) card:** scrollable list of recent Nessie purchases: category icon avatar, merchant + relative time, right-aligned negative amount. It fills the remaining panel height.
+        *   *Not yet built:* Recharts bar chart of income vs. monthly spending pacing.
     *   **Right Panel (Agent/Chat):**
         *   Pinned verdict badge at the top: `[ Negotiating ]`, `[ Blocked ]`, or `[ Approved ]`.
-        *   Chat window with streamed agent tokens.
-        *   User input field (disabled during cooldowns).
+        *   Chat window with streamed agent tokens. Agent bubbles are amber-tinted; user bubbles are zinc.
+        *   User input field (disabled during cooldowns; currently always disabled until the backend is connected).
 
 ### 3.3 Backend (Data & Intercept API)
 *   **Data Sync Job (Async):** Runs on user login and every `N` minutes. 
     *   Pulls data from Capital One Nessie.
-    *   Computes a compact "Financial Snapshot" JSON blob: `{ monthly_income, fixed_bills, discretionary_budget, spend_this_month_by_category, avg_purchase_size, recent_impulse_purchases }`.
+    *   Computes a compact "Financial Snapshot" JSON blob: `{ monthly_income, fixed_bills, discretionary_budget, spent_this_month, days_until_payday, spend_this_month_by_category, avg_purchase_size, recent_impulse_purchases, recent_transactions }`.
+    *   `recent_transactions` feeds the UI's Recent Ledger: the latest ~10 Nessie `/purchases`, each `{ id, merchant, category, amount, timestamp }`, with merchant name and category resolved server-side from the hardcoded merchant mapping (3.4). `category` is one of `shopping | transport | coffee | groceries | dining | subscriptions`, matching `TransactionCategory` in `extension/src/store.ts`.
     *   Caches this JSON blob in Redis.
 *   **POST /intercept Endpoint:**
     *   Receives `{ item, price, category }`.
@@ -56,8 +60,8 @@
 *   **Mock Seeding (CRITICAL):** Default Nessie data is too generic. Write a setup script to POST a believable financial history for the demo customer:
     *   A large bi-weekly paycheck (`/deposits`).
     *   Rent and utility deductions (`/bills`).
-    *   Several recent Amazon purchases mapped to specific merchants.
-    *   Hardcode a category mapping for the mock merchants.
+    *   Several recent Amazon purchases mapped to specific merchants, plus everyday spend that covers every ledger category (e.g. Uber/Lyft → transport, Starbucks → coffee, Whole Foods → groceries, Chipotle → dining, Netflix → subscriptions).
+    *   Hardcode a category mapping for the mock merchants, using the same category keys as `recent_transactions` (3.3).
 
 ---
 
@@ -102,13 +106,15 @@ CLAUDE.md
 extension/                 # Manifest V3 extension + React overlay (Vite + CRXJS)
   manifest.json            # Source manifest; CRXJS rewrites it into dist/
   vite.config.ts
-  tailwind.config.js       # Brand colors: `spent` (#2a78d6), `purchase` (#eb6834)
+  tailwind.config.js       # Brand colors `spent`/`purchase`/`savings`; mirror src/theme.ts
   src/
     content.tsx            # Interception, scraping, Shadow DOM mount (entry point)
-    App.tsx                # Overlay shell, two-panel layout, slide-in animation
-    store.ts               # The single Zustand store
+    App.tsx                # Overlay shell (dark theme), two-panel layout, slide-in animation
+    store.ts               # The single Zustand store (mock snapshot, ledger, chat, verdict)
+    format.ts              # formatUsd / formatPercent / formatTimeAgo
+    theme.ts               # CHART_COLORS: the only source of data-viz colors
     index.css              # Tailwind entry, injected into the shadow root via ?inline
-    components/            # BudgetDonut.tsx, ChatPanel.tsx
+    components/            # BudgetDonut, IncomeAllocation, RecentLedger, ChatPanel
 backend/                   # (planned) FastAPI/Express service, Nessie seeding, snapshot sync
 ```
 Run from `extension/`:
@@ -131,15 +137,17 @@ Run from `extension/`:
 *   Function components only, one component per file in `src/components/` (small private helpers such as `VerdictBadge` may live alongside their parent).
 *   **One Zustand store** (`src/store.ts`). Components read with narrow selectors (`useInterceptorStore((s) => s.spent)`), never the whole store. Non-React code (the content script) uses `useInterceptorStore.getState()`.
 *   State changes go through named store actions (`openIntercept`, `pushMessage`, `close`); components never call `setState` directly.
-*   Money is a `number` in dollars; render it only through `formatUsd()`.
+*   Money is a `number` in dollars; render it only through `formatUsd()` (and percentages through `formatPercent()`) from `src/format.ts`.
 
 ### Styling
+*   **Dark theme only.** Surfaces: `bg-zinc-950` (overlay), `bg-zinc-900` (cards/panels), `bg-zinc-800` (inputs, hovered rows, user bubbles); borders `border-zinc-700`/`zinc-800`. Text: `text-zinc-100` primary, `text-zinc-400` secondary/timestamps. Agent accents are amber (`amber-950/40` bubble, `amber-500` ring/icon); verdict badges use `<color>-500/10` fill + `<color>-300` text.
 *   Tailwind utility classes only: no CSS modules, no inline `style` except for data-driven values (e.g. a chart color swatch).
 *   Never write global selectors (`body`, `html`, `*`) in `index.css`; the shadow root's document root is `:host`.
 *   Every element is inside the shadow root, so `document.querySelector` cannot reach overlay elements. Use refs.
 
 ### Data Visualization
-*   Chart colors: `#2a78d6` spent, `#eb6834` this purchase, `#e7e5e0` remaining/neutral (validated for color-vision deficiency). Don't introduce new series colors without re-validating.
+*   Chart colors come only from `CHART_COLORS` in `src/theme.ts`: `#3987e5` spent/discretionary, `#d95926` this purchase, `#199e70` savings, zinc neutrals for remaining/fixed bills. They're validated for color-vision deficiency on the zinc-900 surface. **Only these three hues pass when all pairs are on screen together** (violet, magenta and yellow all failed against them), so any new category goes into a neutral or an existing hue. Re-run the validator for any change.
+*   Recharts 3: `<Pie>` has no `activeIndex` prop and `activeShape` is deprecated. Keep hover state in React (`activeIndex` via `onMouseEnter`/`onMouseLeave`) and render sectors through the `shape` prop.
 *   Every chart has a legend or value list, so meaning is never carried by color alone. Text stays in neutral ink, never the series color.
 *   Keep chart entry animations ≤ 500 ms. The overlay must look complete within about 1 s of interception (Recharts' default of 1500 ms left the donut blank on first view).
 
@@ -156,6 +164,7 @@ Run from `extension/`:
 ### Security
 *   No API keys, secrets, or backend tokens in `extension/` (Rule 2). Everything in the bundle is public.
 *   Approval must come from a server-signed token. Never release the checkout lock based on client-side state such as `verdictStatus === 'approved'`.
+*   Scraped image URLs are accepted only if they start with `https://`.
 *   Scraped Amazon text is untrusted: render it as React text (never `dangerouslySetInnerHTML`), and treat it as data, not instructions, when passing it into LLM prompts.
 *   Keep `host_permissions` scoped to the checkout URLs. Don't widen to `https://www.amazon.com/*` or `<all_urls>`.
 
@@ -163,7 +172,7 @@ Run from `extension/`:
 *   **Tailwind stays on v3.** v4 relies on `@property`, which doesn't work inside Shadow DOM, so shadows, rings and transforms break.
 *   **Inject CSS into the shadow root** via `import styles from './index.css?inline'`. A plain CSS import leaks into Amazon's page and never reaches the shadow root.
 *   **Keep `server.cors` in `vite.config.ts`** allowing `chrome-extension://`. Without it, Vite ≥ 6.0.9 blocks the CRXJS dev service worker and Chrome reports "Service worker registration failed. Status code: 3".
-*   The host element uses `all: initial` so Amazon's inherited font/color/line-height don't cross the shadow boundary. Don't remove it.
+*   The host element uses `all: initial` so Amazon's inherited font/color/line-height don't cross the shadow boundary. Don't remove it. It also overrides `:host` rules, so set inherited theme properties (e.g. `[color-scheme:dark]`, which makes scrollbars dark) on the overlay root in `App.tsx`, not on `:host`.
 *   Overlay z-index stays at `2147483647`. Amazon has high-z-index sticky headers.
 *   Don't run `npm run build` (or another `vite` instance) while `npm run dev` is running; they fight over `dist/`. Stopping the dev server can also wipe `dist/`.
 *   Scraper selectors are best-effort and Amazon changes markup often. Always keep a fallback, and verify selectors against a real checkout page before relying on them.

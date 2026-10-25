@@ -46,6 +46,15 @@ const firstText = (selectors: string[]) => {
   return null
 }
 
+// Only https URLs: the src is page-controlled and gets rendered inside our overlay.
+const firstImage = (selectors: string[]) => {
+  for (const sel of selectors) {
+    const src = document.querySelector<HTMLImageElement>(sel)?.src
+    if (src?.startsWith('https://')) return src
+  }
+  return null
+}
+
 // Best-effort scrape of the checkout page; falls back to the store's mock item when Amazon's markup shifts.
 function scrapeCheckout(): InterceptedItem {
   const fallback = useInterceptorStore.getState()
@@ -61,6 +70,7 @@ function scrapeCheckout(): InterceptedItem {
   return {
     name: name ?? fallback.cartItemName,
     price: price ?? fallback.cartItemPrice,
+    imageUrl: firstImage(['.lineitem-image img', '[data-csa-c-content-id*="item-image"] img', '.item-image img']),
   }
 }
 
