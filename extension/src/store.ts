@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { callServer, type DecisionOutcome } from './api'
+import { formatUsd } from './format'
 import type { Intensity, Settings } from './settings'
 
 export type VerdictStatus = 'idle' | 'negotiating' | 'blocked' | 'approved'
@@ -121,7 +122,8 @@ interface InterceptorState {
   chatClosed: boolean
   // One decision-log entry per checkout: bought (simulated) or walked away (closed without buying).
   decisionLogged: boolean
-  purchaseState: 'idle' | 'saving' | 'done'
+  // Shown briefly after the overlay is gone, e.g. "Logged $24.99 as a purchase. Nothing was ordered."
+  notice: string | null
   // Mirrors the popup's Testing switch (settings.ts) so the overlay can say no order will be placed.
   testMode: boolean
 
@@ -132,16 +134,15 @@ interface InterceptorState {
   failEvaluation: () => void
   pushMessage: (role: ChatMessage['role'], content: string) => void
   sendChat: (text: string) => Promise<void>
-  buy: () => Promise<void>
-  // Set by the content script: replays the intercepted order click once. Returns false in testing mode or if
-  // the button is gone.
-  releaseCheckout: (() => boolean) | null
-  setReleaseCheckout: (release: () => boolean) => void
+  confirmPurchase: () => Promise<void>
+  showNotice: (text: string) => void
   logDecision: (outcome: DecisionOutcome) => void
   close: () => void
 }
 
 const makeId = () => Math.random().toString(36).slice(2, 10)
+
+const NOTICE_MS = 4000
 
 const CLOSING_LINE: Record<Intensity, string> = {
   light: 'Are you sure you want this?',
@@ -171,7 +172,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
   isAgentTyping: false,
   chatClosed: false,
   decisionLogged: false,
-  purchaseState: 'idle',
+  notice: null,
   testMode: true,
 
   setTestMode: (testMode) => set({ testMode }),
@@ -190,7 +191,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
       isAgentTyping: false,
       chatClosed: false,
       decisionLogged: false,
-      purchaseState: 'idle',
+      notice: null,
       chatHistory: [
         {
           id: makeId(),
@@ -229,49 +230,31 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
       ],
     }),
 
-  // SIMULATED: logs the purchase on the server so the ledger and next score reflect it. The checkout click
-  // stays blocked, so no Amazon order is placed.
-  // The student decided to buy. The purchase is recorded in Nessie (so the next check reflects it) and logged as
-  // "bought". Testing mode stops there: nothing is ordered. In Live mode the original Place Order click is then
-  // released to Amazon, even if the server is unreachable: the choice is always theirs.
-  buy: async () => {
-    const { evaluation, purchaseState, cart, cartTotal, testMode, pushMessage } = get()
-    if (!evaluation || cartTotal === null || purchaseState !== 'idle') return
-    set({ purchaseState: 'saving' })
-    let recorded = true
+  // The student closed the overlay and clicked Place your order again for the same cart: that's their decision
+  // to buy. The purchase is recorded (Nessie or the Finances-tab log) and logged as "bought". In testing mode the
+  // content script has already blocked the click, so nothing is ordered; in Live mode the click went on to Amazon.
+  confirmPurchase: async () => {
+    const { evaluation, decisionLogged, cart, cartTotal, testMode } = get()
+    if (!evaluation || decisionLogged || cartTotal === null) return
+    get().logDecision('bought')
     try {
       const res = await callServer<{ snapshot: ServerSnapshot }>({
         type: 'purchase',
         purchase: { title: cartTitle(cart), price: cartTotal, simulated: testMode },
       })
       set({ finances: fromSnapshot(res.snapshot), dataSource: res.snapshot.source })
+      if (testMode) get().showNotice(`Logged ${formatUsd(cartTotal)} as a purchase. Nothing was ordered (testing mode).`)
     } catch {
-      recorded = false
-    }
-    get().logDecision('bought')
-
-    if (testMode) {
-      if (recorded) {
-        // Simulated purchase logged: close like a real checkout would. "bought" is already logged, so this
-        // close doesn't count as walking away.
-        set({ purchaseState: 'done', isOpen: false, verdictStatus: 'idle' })
-      } else {
-        set({ purchaseState: 'idle' })
-        pushMessage('agent', "I couldn't reach the server, so nothing was logged.")
-      }
-      return
-    }
-
-    if (get().releaseCheckout?.()) {
-      set({ purchaseState: 'done', isOpen: false, verdictStatus: 'idle' })
-    } else {
-      set({ purchaseState: 'idle' })
-      pushMessage('agent', "I couldn't find the order button on the page anymore. Close this and click Place your order again.")
+      get().showNotice("Couldn't reach the server, so this purchase wasn't added to your transactions.")
     }
   },
 
-  releaseCheckout: null,
-  setReleaseCheckout: (releaseCheckout) => set({ releaseCheckout }),
+  showNotice: (text) => {
+    set({ notice: text })
+    setTimeout(() => {
+      if (get().notice === text) set({ notice: null })
+    }, NOTICE_MS)
+  },
 
   pushMessage: (role, content) =>
     set((s) => ({ chatHistory: [...s.chatHistory, { id: makeId(), role, content }] })),
@@ -315,9 +298,7 @@ export const useInterceptorStore = create<InterceptorState>((set, get) => ({
     )
   },
 
-  // Closing after the server answered, without buying, counts as walking away.
-  close: () => {
-    get().logDecision('walked_away')
-    set({ isOpen: false, verdictStatus: 'idle' })
-  },
+  // Closing just returns to the checkout page; the decision is still open. Clicking Place your order again buys
+  // (confirmPurchase); leaving the page or checking out a different cart logs "walked_away" (content.tsx).
+  close: () => set({ isOpen: false, verdictStatus: 'idle' }),
 }))

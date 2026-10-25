@@ -47,8 +47,8 @@
         *   Testing-mode banner under the header (`TestModeBanner`) while testing mode is on.
         *   Chat window. The first agent message is Claude's explanation (money only, no score; Rule 5). Replies arrive whole (not streamed). Agent bubbles are amber-tinted; user bubbles are zinc.
         *   User input: enabled once `evaluation` is set, disabled while the agent is replying, and closed (`chatClosed`, placeholder "Time to decide.") when `/chat` returns `done: true`. **The reply cap is hidden:** the extension doesn't know or show it, so there's no countdown to bargain against. Enter sends, Shift+Enter adds a newline. Sending goes through the store action `sendChat`.
-        *   **Decision bar** (`DecisionBar`, store action `buy`): **Walk away** (same as X / clicking outside) closes and logs `walked_away`. **Buy it / Buy anyway** records the purchase in Nessie via `POST /purchase` and logs `bought`; in **Testing mode** that's all (a simulated purchase, nothing ordered), in **Live mode** the content script then replays the intercepted Place Order click once (`releaseCheckout`), so Amazon places the real order. Real orders are tagged `ORDER` (shown as Amazon.com), simulated ones `SIMULATED`; both come off the balance.
-        *   **Release safety** (`content.tsx`): `releaseCheckout` refuses in Testing mode and when the button is gone; it opens a ≤1.5 s window that closes as soon as the replayed click (or its form submit) passes, so a second click is intercepted again. It releases on the student's own choice, never on the verdict.
+        *   **How the student decides** (no extra buttons; `DecisionBar` is just a hint line): closing the overlay (X / outside) returns to the checkout with the decision still open. **Clicking Place your order again for the same cart** (`content.isConfirmingPurchase`, matched by cart title + total) is the decision to buy: `confirmPurchase` records the purchase (Nessie, or the Finances-tab log) and logs `bought`. In **Testing mode** that click is blocked, so nothing is ordered, and a toast confirms it (`NoticeToast`); in **Live mode** the click goes on to Amazon. **Walked away** is logged when they check out a different cart, or on `pagehide` (best effort).
+        *   **Live-mode pass-through** (`content.tsx`): a confirmed click opens a ≤1.5 s window so its form submit reaches Amazon; it closes as soon as that submit passes, so a further click is intercepted again. The order goes through only on the student's second, explicit Place Order click, never because of a verdict.
         *   *Not yet built:* "Sleep on it 24h" and "Make a commitment" buttons; cooldown.
 
 ### 3.2.1 Configuration Popup (`src/popup/`)
@@ -177,7 +177,7 @@ extension/                 # Manifest V3 extension + React overlay (Vite + CRXJS
     format.ts              # formatUsd / formatPercent / formatTimeAgo
     theme.ts               # CHART_COLORS: the only source of data-viz colors
     index.css              # Tailwind entry, injected into the shadow root via ?inline
-    components/            # BudgetDonut, IncomeAllocation, AllocationBar (shared w/ popup), RecentLedger, FinancesPlaceholder, CartItems, ChatPanel, DecisionBar, TestModeBanner, DataSourceBadge
+    components/            # BudgetDonut, IncomeAllocation, AllocationBar (shared w/ popup), RecentLedger, FinancesPlaceholder, CartItems, ChatPanel, DecisionBar, NoticeToast, TestModeBanner, DataSourceBadge
 server/                    # FastAPI backend (see 3.3)
   app.py score.py finances.py snapshot.py manual.py customers.py decisions.py demo_data.py nessie.py llm.py store.py
   data/                    # seed_data.json, nessie_ids.json (+ git-ignored state.json, commitments.json)
@@ -255,7 +255,7 @@ Run from `server/` (one-time setup: `python -m venv .venv`, then `.venv/Scripts/
 
 ### Security
 *   No API keys, secrets, or backend tokens in `extension/` (Rule 2). Everything in the bundle is public. Keys live only in `server/.env`, which is git-ignored; never print them (Nessie URLs contain the key).
-*   The verdict comes from the server's score, never from client state or from the LLM. The checkout lock is released only by the student's explicit **Buy it / Buy anyway** in Live mode (the user can always override), never because of a verdict or `verdictStatus === 'approved'`. Never in Testing mode.
+*   The verdict comes from the server's score, never from client state or from the LLM. The checkout lock lets an order through only on the student's second, explicit Place your order click in Live mode (the user can always override), never because of a verdict or `verdictStatus === 'approved'`. Never in Testing mode.
 *   Never let LLM output change a score, mode or verdict. Keep the number guard on every LLM text path, and recompute facts server-side rather than accepting them from the client.
 *   Scraped image URLs are accepted only if they start with `https://`.
 *   Scraped Amazon text is untrusted: render it as React text (never `dangerouslySetInnerHTML`), and treat it as data, not instructions, when passing it into LLM prompts.
